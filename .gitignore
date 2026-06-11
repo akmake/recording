@@ -1,0 +1,51 @@
+# ─── Gradle build output ───────────────────────────────────────
+/build/
+/app/build/
+.gradle/
+
+# ─── Local configuration (machine-specific) ─────────────────────
+local.properties
+
+# ─── IDE files ──────────────────────────────────────────────────
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.kotlin/
+
+# ─── OS generated files ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Log files ──────────────────────────────────────────────────
+*.log
+
+# ─── Build artifacts ────────────────────────────────────────────
+*.apk
+*.rar
+*.zip
+*.class
+*.dex
+*.jar
+*.war
+*.ear
+
+# ─── Misc editor temp files ─────────────────────────────────────
+*.swp
+*.swo
+
+# ─── Python virtual environment ─────────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+
+# ─── Large local tools (not part of the project source) ─────────
+jadx/
+java/
+
+# ─── Decompiled / extracted output ──────────────────────────────
+app/rambam_extracted/
+
+# ─── Node (if ever used) ────────────────────────────────────────
+node_modules/

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "888401210010",
+    "project_id": "myhome-a9cc1",
+    "storage_bucket": "myhome-a9cc1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:888401210010:android:7ddd95412dc43c4b69cd23",
+        "android_client_info": {
+          "package_name": "com.example.goodstart"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBqlqJ8tx_yFH4j6qbIgD56nz19h2jghn8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

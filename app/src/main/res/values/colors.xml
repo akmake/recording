@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- iOS System Colors - Apple Design Language -->
+    <color name="primary">#007AFF</color>
+    <color name="primary_dark">#0062CC</color>
+    <color name="primary_light">#4DA3FF</color>
+    <color name="primary_ultra_light">#E5F1FF</color>
+
+    <!-- System Colors -->
+    <color name="system_green">#34C759</color>
+    <color name="system_red">#FF3B30</color>
+    <color name="system_orange">#FF9500</color>
+    <color name="system_yellow">#FFCC00</color>
+    <color name="system_pink">#FF2D55</color>
+    <color name="system_purple">#AF52DE</color>
+    <color name="system_teal">#5AC8FA</color>
+    <color name="system_indigo">#5856D6</color>
+
+    <!-- Backgrounds -->
+    <color name="background">#F5F5F7</color>
+    <color name="background_secondary">#EFF0F5</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_elevated">#FFFFFF</color>
+
+    <!-- Text -->
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="text_primary">#000000</color>
+    <color name="text_secondary">#6E6E73</color>
+    <color name="text_tertiary">#C7C7CC</color>
+    <color name="text_hint">#C7C7CC</color>
+    <color name="text_on_primary">#FFFFFF</color>
+
+    <!-- Separators / Dividers -->
+    <color name="divider">#D1D1D6</color>
+    <color name="divider_light">#E7E8EE</color>
+
+    <!-- Chat Colors -->
+    <color name="chat_sent">#007AFF</color>
+    <color name="chat_sent_text">#FFFFFF</color>
+    <color name="chat_received">#E9E9EB</color>
+    <color name="chat_received_text">#000000</color>
+    <color name="chat_time">#8E8E93</color>
+    <color name="chat_time_sent">#FFFFFF</color>
+    <color name="chat_bg">#FFFFFF</color>
+
+    <!-- Task Priority -->
+    <color name="urgent_bg">#FFF1F0</color>
+    <color name="urgent_border">#FF3B30</color>
+    <color name="urgent_text">#FF3B30</color>
+    <color name="general_bg">#F0F8FF</color>
+    <color name="general_border">#007AFF</color>
+    <color name="task_done_bg">#F0FFF4</color>
+
+    <!-- Shopping Categories -->
+    <color name="cat_supermarket">#34C759</color>
+    <color name="cat_electronics">#007AFF</color>
+    <color name="cat_pharmacy">#FF3B30</color>
+    <color name="cat_clothing">#AF52DE</color>
+    <color name="cat_home">#FF9500</color>
+    <color name="cat_other">#8E8E93</color>
+
+    <!-- Expense Categories -->
+    <color name="expense_food">#34C759</color>
+    <color name="expense_transport">#007AFF</color>
+    <color name="expense_entertainment">#FF9500</color>
+    <color name="expense_bills">#FF3B30</color>
+    <color name="expense_shopping">#AF52DE</color>
+    <color name="expense_health">#FF2D55</color>
+    <color name="expense_education">#5856D6</color>
+    <color name="expense_other">#8E8E93</color>
+
+    <!-- Home Cards -->
+    <color name="card_blue_bg">#E5F1FF</color>
+    <color name="card_green_bg">#E5FFF0</color>
+    <color name="card_amber_bg">#FFF8E5</color>
+    <color name="card_purple_bg">#F5EEFF</color>
+    <color name="card_red_bg">#FFF0F0</color>
+
+    <!-- Rambam / Torah Reader Colors -->
+    <color name="rambam_primary">#1B7A6D</color>
+    <color name="rambam_primary_light">#E8F5F3</color>
+    <color name="rambam_bg">#FAF7F2</color>
+    <color name="rambam_divider">#C8E6E2</color>
+
+    <!-- Navigation -->
+    <color name="nav_inactive">#8E8E93</color>
+    <color name="nav_active">#007AFF</color>
+
+    <!-- Gradient -->
+    <color name="gradient_start">#007AFF</color>
+    <color name="gradient_end">#5856D6</color>
+
+    <!-- Channel / Group -->
+    <color name="channel_header_bg">#1C1C1E</color>
+    <color name="online_indicator">#34C759</color>
+    <color name="away_indicator">#8E8E93</color>
+
+    <!-- Status bar -->
+    <color name="status_bar">#FFFFFF</color>
+
+    <!-- Shadow -->
+    <color name="shadow">#1A000000</color>
+
+    <!-- Accent -->
+    <color name="accent">#FF9500</color>
+    <color name="accent_light">#FFD080</color>
+
+    <!-- Legacy aliases for compatibility -->
+    <color name="error">#FF3B30</color>
+    <color name="success">#34C759</color>
+
+    <!-- Accent Blobs (decorative oval shapes on study cards) -->
+    <color name="accent_blob_amber">#FFD9A0</color>
+    <color name="accent_blob_blue">#A8D0FF</color>
+    <color name="accent_blob_emerald">#A0F0C0</color>
+    <color name="accent_blob_violet">#C8A8F0</color>
+
+    <!-- Shieor (Study card) theme -->
+    <color name="shieor_bg">#FDFBF7</color>
+    <color name="shieor_line">#C8E6E2</color>
+    <color name="shieor_ink">#1B2A4A</color>
+    <color name="shieor_muted">#6E6E73</color>
+</resources>

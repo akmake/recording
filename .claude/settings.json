@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew assembleDebug)",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\yosef\\\\Documents\\\\GitHub\\\\AppHome && gradlew.bat assembleDebug 2>&1\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\yosef\\\\Documents\\\\GitHub\\\\AppHome && gradlew.bat assembleDebug > C:\\\\Users\\\\yosef\\\\AppData\\\\Local\\\\Temp\\\\build_output.txt 2>&1 && echo BUILD_SUCCESS || echo BUILD_FAILED\")",
+      "Bash(powershell.exe -Command \"Set-Location ''C:\\\\Users\\\\yosef\\\\Documents\\\\GitHub\\\\AppHome''; .\\\\gradlew.bat assembleDebug\")",
+      "Bash(./gradlew dependencies:*)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; $env:PATH = \"$env:JAVA_HOME\\\\bin;$env:PATH\"; Set-Location \"c:\\\\Users\\\\yosef dahan\\\\Documents\\\\GitHub\\\\reko\"; .\\\\gradlew.bat assembleRelease 2>&1)",
+      "Bash(cmd /c \"gradlew.bat assembleRelease\")",
+      "PowerShell(Get-ChildItem \"C:\\\\Program Files\" -Directory | Where-Object { $_.Name -match \"Android|Java|JDK|jdk\" } | Select-Object FullName)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\yosef dahan\\\\AppData\\\\Local\\\\Android\\\\Sdk\" -ErrorAction SilentlyContinue | Select-Object Name -First 10; Get-ChildItem \"C:\\\\Users\\\\yosef dahan\" -Directory | Where-Object { $_.Name -match \"android|java|jdk\" } | Select-Object Name)",
+      "PowerShell(Get-Command java -ErrorAction SilentlyContinue; $env:JAVA_HOME; Get-ChildItem \"C:\\\\\" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match \"java|jdk|android\" } | Select-Object FullName)",
+      "Read(//c/AndroidSDK/**)",
+      "Bash(cmd //c \"gradlew.bat assembleRelease\")",
+      "Bash(java -version)",
+      "Bash(bash gradlew *)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; $env:PATH = \"$env:JAVA_HOME\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\yosef dahan\\\\Documents\\\\GitHub\\\\reko\"; .\\\\gradlew.bat assembleRelease 2>&1 | Select-Object -Last 30)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; $env:PATH = \"$env:JAVA_HOME\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\yosef dahan\\\\Documents\\\\GitHub\\\\reko\"; .\\\\gradlew.bat assembleRelease 2>&1 | Select-Object -Last 15)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; $env:PATH = \"$env:JAVA_HOME\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\yosef dahan\\\\Documents\\\\GitHub\\\\reko\"; .\\\\gradlew.bat assembleRelease 2>&1 | Where-Object { $_ -match \"error:|Error|exception\" } | Select-Object -First 20)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; $env:PATH = \"$env:JAVA_HOME\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\yosef dahan\\\\Documents\\\\GitHub\\\\reko\"; .\\\\gradlew.bat assembleRelease 2>&1 | Select-Object -Last 10)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; $env:PATH = \"$env:JAVA_HOME\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\yosef dahan\\\\Documents\\\\GitHub\\\\reko\"; .\\\\gradlew.bat compileReleaseKotlin 2>&1 | Where-Object { $_ -match \"error|Error|Unresolved|Cannot\" })",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; $env:PATH = \"$env:JAVA_HOME\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\yosef dahan\\\\Documents\\\\GitHub\\\\reko\"; .\\\\gradlew.bat assembleRelease 2>&1 | Select-Object -Last 8)"
+    ]
+  }
+}
