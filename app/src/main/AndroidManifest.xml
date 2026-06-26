@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- מערכת/privileged בלבד. בטלפון רגיל ה-OS מתעלם ממנה, אבל בחלק מ-ROM של יצרנים
+         נוכחותה היא מה שמתיר את מקור VOICE_CALL (שני הצדדים). לא מזיק בלעדיה. -->
+    <uses-permission android:name="android.permission.CAPTURE_AUDIO_OUTPUT"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -32,7 +36,7 @@
         <service
             android:name=".service.CallRecordingService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection|microphone" />
+            android:foregroundServiceType="microphone" />
 
         <service
             android:name=".service.CallAccessibilityService"
