@@ -10,6 +10,7 @@ import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.callstream.recorder.call.CallLogResolver
 import com.callstream.recorder.call.CallType
 import com.callstream.recorder.call.ContactResolver
 import com.callstream.recorder.RecorderPreferences
@@ -80,18 +81,32 @@ class CallAccessibilityService : AccessibilityService() {
             TelephonyManager.CALL_STATE_OFFHOOK -> {
                 if (!cellularActive && !whatsAppActive) {
                     cellularActive = true
-                    val name = ContactResolver.nameForNumber(this, lastNumber)
-                    startRecording(name, lastNumber, CallType.CELLULAR)
+                    // Best-effort label for the live overlay; corrected authoritatively at IDLE.
+                    val (num, name) = resolveCellular()
+                    startRecording(name, num, CallType.CELLULAR)
                 }
             }
             TelephonyManager.CALL_STATE_IDLE -> {
                 if (cellularActive) {
                     cellularActive = false
+                    // At call end the just-finished call is the newest call-log row, so this is
+                    // the reliable place to recover the number + name. Passed to STOP so the
+                    // saved recording is labeled correctly even if OFFHOOK had nothing.
+                    val (num, name) = resolveCellular()
                     lastNumber = null
-                    stopRecording()
+                    stopRecording(name, num)
                 }
             }
         }
+    }
+
+    /** Number + display name for the current cellular call, via the phone-state number if we
+     *  got one, otherwise the call log; name via Contacts, falling back to the caller-ID cache. */
+    private fun resolveCellular(): Pair<String?, String?> {
+        val logEntry = CallLogResolver.mostRecent(this)
+        val number = lastNumber ?: logEntry?.number
+        val name = ContactResolver.nameForNumber(this, number) ?: logEntry?.cachedName
+        return number to name
     }
 
     // ---- WhatsApp / VoIP ---------------------------------------------------------------
@@ -169,10 +184,12 @@ class CallAccessibilityService : AccessibilityService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i) else startService(i)
     }
 
-    private fun stopRecording() {
-        Log.i(TAG, "Call ended")
+    private fun stopRecording(name: String? = null, number: String? = null) {
+        Log.i(TAG, "Call ended (name=$name number=$number)")
         val i = Intent(this, CallRecordingService::class.java).apply {
             action = CallRecordingService.ACTION_STOP
+            name?.let { putExtra(CallRecordingService.EXTRA_NAME, it) }
+            number?.let { putExtra(CallRecordingService.EXTRA_NUMBER, it) }
         }
         startService(i)
     }

@@ -26,6 +26,7 @@ import androidx.core.app.NotificationCompat
 import com.callstream.recorder.R
 import com.callstream.recorder.audio.AudioMetrics
 import com.callstream.recorder.audio.AudioNormalizer
+import com.callstream.recorder.audio.NoiseReducer
 import com.callstream.recorder.audio.WavIo
 import com.callstream.recorder.call.CallType
 import com.callstream.recorder.call.Recording
@@ -80,8 +81,10 @@ class CallRecordingService : Service() {
     private var windowManager: WindowManager? = null
     private var overlay: View? = null
 
-    private var displayName: String? = null
-    private var number: String? = null
+    // @Volatile: written on the main thread (onStartCommand), read on the record thread
+    // (finalizeRecording). The ACTION_STOP handler may refine these from the call log.
+    @Volatile private var displayName: String? = null
+    @Volatile private var number: String? = null
     private var callType: CallType = CallType.UNKNOWN
     private var startedAt = 0L
     @Volatile private var usedSource: String = "unknown"
@@ -91,6 +94,11 @@ class CallRecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                // The stopper (CallAccessibilityService at call end) may carry a number/name
+                // recovered from the call log — refine the labels before we finalize. Guard
+                // against nulls so the overlay's close button doesn't wipe a good label.
+                intent.getStringExtra(EXTRA_NAME)?.let { displayName = it }
+                intent.getStringExtra(EXTRA_NUMBER)?.let { number = it }
                 stopRecordingAndFinish()
                 return START_NOT_STICKY
             }
@@ -256,7 +264,10 @@ class CallRecordingService : Service() {
             rawFile.delete()
 
             val loaded = WavIo.readPcm16(rawWav)
-            val result = AudioNormalizer.process(loaded)
+            // Spectral noise reduction first, THEN normalize — so the make-up gain lifts
+            // voice, not hiss (the capture sits only ~15-20 dB over the noise floor).
+            val denoised = NoiseReducer.reduce(loaded)
+            val result = AudioNormalizer.process(denoised)
             val normalized = result.audio
 
             val outDir = File(getExternalFilesDir(null), "recordings").apply { mkdirs() }
@@ -278,9 +289,12 @@ class CallRecordingService : Service() {
             // Per-second metrics sidecars (raw vs processed) — exportable from the UI so
             // the normalizer's behavior on real calls can be analyzed offline.
             try {
+                // raw.csv describes the true raw capture, so measure the raw signal itself
+                // (result.diagnostics is derived from the denoised signal → for processed.csv).
+                val rawDiag = AudioNormalizer.process(loaded).diagnostics
                 AudioMetrics.writeCsv(
                     File(outDir, "$baseName.raw.csv"),
-                    loaded, result.diagnostics, AudioMetrics.Stage.RAW, outWav.name, usedSource
+                    loaded, rawDiag, AudioMetrics.Stage.RAW, outWav.name, usedSource
                 )
                 AudioMetrics.writeCsv(
                     File(outDir, "$baseName.processed.csv"),

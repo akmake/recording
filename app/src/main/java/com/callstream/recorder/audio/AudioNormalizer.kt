@@ -33,10 +33,11 @@ object AudioNormalizer {
 
     data class Config(
         val frameMs: Double = 20.0,
-        /** Target RMS in normalized [-1,1] full scale. ~0.2 ≈ -14 dBFS, a comfortable level. */
-        val targetRms: Double = 0.20,
+        /** Target RMS in normalized [-1,1] full scale. ~0.25 ≈ -12 dBFS — a bit louder so the
+         *  weak far end comes up more (safe now that NoiseReducer runs first). */
+        val targetRms: Double = 0.25,
         /** Weak far-end-only calls sit near the noise floor, so allow more make-up headroom. */
-        val maxGain: Double = 20.0,
+        val maxGain: Double = 24.0,
         val minGain: Double = 0.3,
         /** Gate OPENS when frame RMS ≥ noiseFloor × this. */
         val gateOpenFactor: Double = 2.0,
