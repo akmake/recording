@@ -10,6 +10,9 @@ import android.graphics.PixelFormat
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -21,6 +24,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.callstream.recorder.R
+import com.callstream.recorder.audio.AudioMetrics
 import com.callstream.recorder.audio.AudioNormalizer
 import com.callstream.recorder.audio.WavIo
 import com.callstream.recorder.call.CallType
@@ -54,11 +58,18 @@ class CallRecordingService : Service() {
         private const val NOTIF_ID = 42
 
         private const val SAMPLE_RATE = 44100
-        // Preference order: VOICE_CALL captures both legs on privileged ROMs; the rest
-        // are progressively more permissive fallbacks for ordinary phones.
+        // Preference order for capturing RAW material (our AudioNormalizer balances it later):
+        //   VOICE_CALL       — both legs on privileged ROMs; auto-skipped when it streams
+        //                      silence (the common case on ordinary phones).
+        //   VOICE_RECOGNITION — raw mic with NO platform echo cancellation. This is the path
+        //                      that actually works: near end loud, far end faint (earpiece
+        //                      leak) — exactly the imbalance the normalizer is built to fix.
+        //   MIC              — last-resort raw mic.
+        // VOICE_COMMUNICATION is intentionally absent: it forces the OS echo canceller, whose
+        // job is to erase the earpiece leak of the far party — i.e. it deletes the other
+        // person, leaving only your own voice. That is the regression that broke recording.
         private val SOURCE_PRIORITY = intArrayOf(
             MediaRecorder.AudioSource.VOICE_CALL,
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
             MediaRecorder.AudioSource.MIC,
         )
@@ -73,6 +84,7 @@ class CallRecordingService : Service() {
     private var number: String? = null
     private var callType: CallType = CallType.UNKNOWN
     private var startedAt = 0L
+    @Volatile private var usedSource: String = "unknown"
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -107,16 +119,12 @@ class CallRecordingService : Service() {
             var written = 0L
             var record: AudioRecord? = null
             try {
+                // openRecorder() returns an already-started, signal-verified recorder.
                 record = openRecorder() ?: run {
                     Log.e(TAG, "No usable audio source; aborting")
                     return@thread
                 }
-                val minBuf = AudioRecord.getMinBufferSize(
-                    SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
-                ).coerceAtLeast(4096)
-                val buffer = ByteArray(minBuf)
-
-                record.startRecording()
+                val buffer = ByteArray(readBufferSize())
                 BufferedOutputStream(FileOutputStream(rawFile)).use { out ->
                     while (recording) {
                         val n = record.read(buffer, 0, buffer.size)
@@ -137,28 +145,105 @@ class CallRecordingService : Service() {
         }
     }
 
-    private fun openRecorder(): AudioRecord? {
-        val minBuf = AudioRecord.getMinBufferSize(
+    private fun readBufferSize(): Int =
+        AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         ).coerceAtLeast(4096)
+
+    /**
+     * Returns the first capture source that is not merely initialized but actually *delivers
+     * audio*, already started and recording.
+     *
+     * Why the live probe: on ordinary phones VOICE_CALL usually initializes fine yet streams
+     * pure digital silence (the OS quietly denies two-leg capture). The old code accepted any
+     * INITIALIZED source, locked onto that dead stream, and saved empty recordings. We now
+     * read a short burst and only lock onto a source that yields real, non-zero samples.
+     *
+     * A raw mic source (VOICE_RECOGNITION / MIC) that merely probes quiet at call setup — the
+     * line may still be ringing — is remembered as a fallback so we never abort on a source
+     * that is valid but hasn't started carrying call audio yet.
+     */
+    private fun openRecorder(): AudioRecord? {
+        val bufSize = readBufferSize() * 2
+        var fallback: AudioRecord? = null
         for (source in SOURCE_PRIORITY) {
+            var r: AudioRecord? = null
             try {
                 @Suppress("MissingPermission")
-                val r = AudioRecord(
+                r = AudioRecord(
                     source, SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
-                    minBuf * 2
+                    bufSize
                 )
-                if (r.state == AudioRecord.STATE_INITIALIZED) {
-                    Log.i(TAG, "Using audio source $source")
+                if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); continue }
+
+                // Keep the OS from pre-processing our raw material (see disableOsEffects).
+                disableOsEffects(r.audioSessionId)
+                r.startRecording()
+
+                if (deliversAudio(r)) {
+                    Log.i(TAG, "Using audio source $source (live signal confirmed)")
+                    // A live source beats any silent-probing fallback we were holding.
+                    fallback?.let { runCatching { it.stop(); it.release() } }
+                    usedSource = sourceName(source)
                     return r
                 }
-                r.release()
+
+                val isMic = source == MediaRecorder.AudioSource.VOICE_RECOGNITION ||
+                    source == MediaRecorder.AudioSource.MIC
+                if (isMic && fallback == null) {
+                    Log.w(TAG, "Source $source probed silent; keeping as fallback")
+                    fallback = r  // don't release: call audio may start after ringing
+                    usedSource = sourceName(source) + " (silent probe)"
+                } else {
+                    Log.w(TAG, "Source $source delivered only silence; trying next")
+                    r.stop(); r.release()
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Source $source unavailable: ${e.message}")
+                try { r?.release() } catch (_: Exception) {}
             }
         }
-        return null
+        if (fallback != null) Log.i(TAG, "Using fallback mic source (probed silent at setup)")
+        return fallback
+    }
+
+    private fun sourceName(source: Int): String = when (source) {
+        MediaRecorder.AudioSource.VOICE_CALL -> "VOICE_CALL"
+        MediaRecorder.AudioSource.VOICE_RECOGNITION -> "VOICE_RECOGNITION"
+        MediaRecorder.AudioSource.MIC -> "MIC"
+        else -> "source_$source"
+    }
+
+    /** Reads up to ~500 ms and reports whether any genuinely non-zero sample arrived. */
+    private fun deliversAudio(record: AudioRecord): Boolean {
+        val probe = ShortArray(SAMPLE_RATE / 10) // 100 ms chunks
+        val deadline = System.currentTimeMillis() + 500
+        while (System.currentTimeMillis() < deadline) {
+            val n = record.read(probe, 0, probe.size)
+            for (i in 0 until n) if (probe[i].toInt() != 0) return true
+        }
+        return false
+    }
+
+    /**
+     * Disables the platform voice-DSP effects on our capture session. We want the untouched
+     * mic signal so our own offline [AudioNormalizer] can balance it; the OS effects would
+     * otherwise pre-chew it — most damagingly the echo canceller, which removes the far end.
+     */
+    private fun disableOsEffects(sessionId: Int) {
+        runCatching {
+            if (AcousticEchoCanceler.isAvailable())
+                AcousticEchoCanceler.create(sessionId)?.enabled = false
+        }
+        runCatching {
+            if (AutomaticGainControl.isAvailable())
+                AutomaticGainControl.create(sessionId)?.enabled = false
+        }
+        runCatching {
+            if (NoiseSuppressor.isAvailable())
+                NoiseSuppressor.create(sessionId)?.enabled = false
+        }
     }
 
     /** Wrap raw PCM as WAV, normalize it, write the labeled output + sidecar. */
@@ -171,7 +256,8 @@ class CallRecordingService : Service() {
             rawFile.delete()
 
             val loaded = WavIo.readPcm16(rawWav)
-            val normalized = AudioNormalizer.normalize(loaded)
+            val result = AudioNormalizer.process(loaded)
+            val normalized = result.audio
 
             val outDir = File(getExternalFilesDir(null), "recordings").apply { mkdirs() }
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(startedAt))
@@ -180,6 +266,22 @@ class CallRecordingService : Service() {
             val outWav = File(outDir, "${stamp}_$safeLabel.wav")
             WavIo.writePcm16(outWav, normalized)
             rawWav.delete()
+
+            // Per-second metrics sidecars (raw vs processed) — exportable from the UI so
+            // the normalizer's behavior on real calls can be analyzed offline.
+            try {
+                val baseName = outWav.name.removeSuffix(".wav")
+                AudioMetrics.writeCsv(
+                    File(outDir, "$baseName.raw.csv"),
+                    loaded, result.diagnostics, AudioMetrics.Stage.RAW, outWav.name, usedSource
+                )
+                AudioMetrics.writeCsv(
+                    File(outDir, "$baseName.processed.csv"),
+                    normalized, result.diagnostics, AudioMetrics.Stage.PROCESSED, outWav.name, usedSource
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Metrics export failed (recording itself is saved)", e)
+            }
 
             val rec = Recording(
                 wavPath = outWav.absolutePath,

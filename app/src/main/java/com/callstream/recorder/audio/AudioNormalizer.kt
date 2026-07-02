@@ -46,10 +46,35 @@ object AudioNormalizer {
         val limiterCeiling: Double = 0.95,
     )
 
-    fun normalize(input: WavIo.PcmAudio, cfg: Config = Config()): WavIo.PcmAudio {
+    /**
+     * Everything the normalizer measured and decided, at 20 ms frame resolution.
+     * Kept so the per-second metrics export ([AudioMetrics]) can document not just the
+     * audio before/after, but the gain curve the normalizer actually applied.
+     */
+    data class Diagnostics(
+        val cfg: Config,
+        val frameLen: Int,            // samples per analysis frame
+        val noiseFloor: Double,       // adaptive floor (10th percentile of frame RMS)
+        val gateThreshold: Double,    // frames below this were treated as noise
+        val frameRms: DoubleArray,    // raw-signal RMS per frame
+        val rawGain: DoubleArray,     // target gain before smoothing
+        val smoothGain: DoubleArray,  // gain actually applied (after envelope follower)
+    )
+
+    data class Result(val audio: WavIo.PcmAudio, val diagnostics: Diagnostics)
+
+    fun normalize(input: WavIo.PcmAudio, cfg: Config = Config()): WavIo.PcmAudio =
+        process(input, cfg).audio
+
+    fun process(input: WavIo.PcmAudio, cfg: Config = Config()): Result {
         val x = input.samples
         val sr = input.sampleRate
-        if (x.isEmpty()) return input
+        if (x.isEmpty()) {
+            return Result(
+                input,
+                Diagnostics(cfg, 1, 0.0, 0.0, DoubleArray(0), DoubleArray(0), DoubleArray(0))
+            )
+        }
 
         val frameLen = (sr * cfg.frameMs / 1000.0).toInt().coerceAtLeast(1)
         val frameCount = (x.size + frameLen - 1) / frameLen
@@ -97,7 +122,10 @@ object AudioNormalizer {
             out[i] = softLimit(x[i].toDouble() * gain, cfg.limiterCeiling).toFloat()
         }
 
-        return WavIo.PcmAudio(out, sr)
+        return Result(
+            WavIo.PcmAudio(out, sr),
+            Diagnostics(cfg, frameLen, noiseFloor, gateThreshold, rms, rawGain, smoothGain)
+        )
     }
 
     /** Linear interpolation of the frame gain, sampled at frame centers, for zipper-free gain. */

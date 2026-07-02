@@ -9,10 +9,12 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.format.DateUtils
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -36,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.callstream.recorder.call.CallType
 import com.callstream.recorder.call.Recording
 import com.callstream.recorder.service.CallAccessibilityService
@@ -87,6 +90,8 @@ private fun HomeScreen() {
     var permissionsGranted by remember { mutableStateOf(hasAllPermissions(context)) }
     var query by remember { mutableStateOf("") }
     var showSetup by remember { mutableStateOf(false) }
+    var autoRecord by remember { mutableStateOf(RecorderPreferences.isAutoRecordEnabled(context)) }
+    var recordingMode by remember { mutableStateOf(RecorderPreferences.recordingMode(context)) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -115,6 +120,18 @@ private fun HomeScreen() {
                         onAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
                     )
                 }
+                RecordingPreferencesCard(
+                    autoRecord = autoRecord,
+                    recordingMode = recordingMode,
+                    onAutoRecordChange = {
+                        autoRecord = it
+                        RecorderPreferences.setAutoRecordEnabled(context, it)
+                    },
+                    onModeChange = {
+                        recordingMode = it
+                        RecorderPreferences.setRecordingMode(context, it)
+                    }
+                )
                 SearchField(query) { query = it }
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
@@ -132,6 +149,84 @@ private fun HomeScreen() {
                 items(filtered, key = { it.wavPath }) { recording -> RecordingRow(recording) }
             }
         }
+    }
+}
+
+@Composable
+private fun RecordingPreferencesCard(
+    autoRecord: Boolean,
+    recordingMode: RecordingMode,
+    onAutoRecordChange: (Boolean) -> Unit,
+    onModeChange: (RecordingMode) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = Color.White
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(42.dp).clip(CircleShape).background(Color(0xFFE7F8F3)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Phone, null, tint = DeepGreen, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("הקלטה אוטומטית", fontWeight = FontWeight.Bold, color = Ink)
+                    Text(
+                        if (autoRecord) "ההקלטה תתחיל לבד בתחילת שיחה" else "שיחות לא יוקלטו אוטומטית",
+                        color = Muted, fontSize = 13.sp
+                    )
+                }
+                Switch(
+                    checked = autoRecord,
+                    onCheckedChange = onAutoRecordChange,
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = WhatsAppGreen)
+                )
+            }
+
+            AnimatedVisibility(visible = autoRecord) {
+                Column {
+                    HorizontalDivider(Modifier.padding(vertical = 16.dp), color = Divider)
+                    Text("אילו שיחות להקליט?", color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RecordingModeOption("הכול", RecordingMode.BOTH, recordingMode, onModeChange, Modifier.weight(1f))
+                        RecordingModeOption("סלולרי", RecordingMode.CELLULAR, recordingMode, onModeChange, Modifier.weight(1f))
+                        RecordingModeOption("WhatsApp", RecordingMode.WHATSAPP, recordingMode, onModeChange, Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordingModeOption(
+    label: String,
+    mode: RecordingMode,
+    selectedMode: RecordingMode,
+    onSelected: (RecordingMode) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val selected = mode == selectedMode
+    Surface(
+        modifier = modifier.clickable { onSelected(mode) },
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) Color(0xFFE7F8F3) else Canvas,
+        border = if (selected) androidx.compose.foundation.BorderStroke(1.5.dp, WhatsAppGreen) else null
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 11.dp),
+            textAlign = TextAlign.Center,
+            color = if (selected) DeepGreen else Muted,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            fontSize = 13.sp,
+            maxLines = 1
+        )
     }
 }
 
@@ -239,6 +334,13 @@ private fun RecordingRow(rec: Recording) {
             }
         }
         Spacer(Modifier.width(8.dp))
+        val ctx = LocalContext.current
+        FilledIconButton(
+            onClick = { shareMetrics(ctx, rec) },
+            modifier = Modifier.size(42.dp),
+            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFF0F2F5), contentColor = Muted)
+        ) { Icon(Icons.Default.Share, "ייצוא נתוני עיבוד", modifier = Modifier.size(19.dp)) }
+        Spacer(Modifier.width(8.dp))
         FilledIconButton(
             onClick = {
                 if (playing) { player?.stop(); player?.release(); player = null; playing = false }
@@ -275,6 +377,27 @@ private fun isAccessibilityEnabled(context: Context): Boolean {
     val service = "${context.packageName}/${CallAccessibilityService::class.java.name}"
     return enabled.split(':').any { it.equals(service, ignoreCase = true) }
 }
+/**
+ * Shares the two per-second metrics CSVs (raw + processed) of a recording, so they can be
+ * uploaded to an AI/analysis tool to see where the normalizer worked well and where not.
+ */
+private fun shareMetrics(context: Context, rec: Recording) {
+    val files = listOf(rec.rawMetricsFile(), rec.processedMetricsFile()).filter { it.exists() }
+    if (files.isEmpty()) {
+        Toast.makeText(context, "אין קובצי נתונים להקלטה הזו (הוקלטה לפני העדכון)", Toast.LENGTH_LONG).show()
+        return
+    }
+    val uris = ArrayList(files.map {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", it)
+    })
+    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+        type = "text/csv"
+        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "ייצוא נתוני הקלטה (${files.size} קבצים)"))
+}
+
 private fun loadRecordings(context: Context): List<Recording> {
     val dir = File(context.getExternalFilesDir(null), "recordings")
     return dir.listFiles { file -> file.extension == "json" }?.mapNotNull(Recording::fromSidecar)?.filter { File(it.wavPath).exists() }?.sortedByDescending { it.startedAtMillis } ?: emptyList()

@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.callstream.recorder.call.CallType
 import com.callstream.recorder.call.ContactResolver
+import com.callstream.recorder.RecorderPreferences
 
 /**
  * Always-on detector. Two independent triggers:
@@ -154,6 +155,10 @@ class CallAccessibilityService : AccessibilityService() {
     // ---- Bridge to recorder ------------------------------------------------------------
 
     private fun startRecording(name: String?, number: String?, type: CallType) {
+        if (!RecorderPreferences.shouldRecord(this, type)) {
+            Log.i(TAG, "Recording skipped by user preference: type=$type")
+            return
+        }
         Log.i(TAG, "Call started: type=$type name=$name number=$number")
         val i = Intent(this, CallRecordingService::class.java).apply {
             action = CallRecordingService.ACTION_START

@@ -30,6 +30,10 @@ data class Recording(
 
     fun sidecarFile(): File = File(wavPath.removeSuffix(".wav") + ".json")
 
+    /** Per-second metrics CSVs written by CallRecordingService (may not exist for old recordings). */
+    fun rawMetricsFile(): File = File(wavPath.removeSuffix(".wav") + ".raw.csv")
+    fun processedMetricsFile(): File = File(wavPath.removeSuffix(".wav") + ".processed.csv")
+
     companion object {
         fun fromSidecar(json: File): Recording? = try {
             val o = JSONObject(json.readText())
