@@ -41,8 +41,11 @@ __pycache__/
 *.pyc
 
 # ─── Large local tools (not part of the project source) ─────────
-jadx/
-java/
+# NOTE: these MUST be anchored with a leading slash. A bare "java/"
+# matches app/src/main/java/ at any depth and silently drops all
+# Kotlin/Java sources from git (this already happened once).
+/jadx/
+/java-tools/
 
 # ─── Decompiled / extracted output ──────────────────────────────
 app/rambam_extracted/
