@@ -35,14 +35,22 @@ object AudioNormalizer {
         val frameMs: Double = 20.0,
         /** Target RMS in normalized [-1,1] full scale. ~0.2 ≈ -14 dBFS, a comfortable level. */
         val targetRms: Double = 0.20,
-        val maxGain: Double = 12.0,
+        /** Weak far-end-only calls sit near the noise floor, so allow more make-up headroom. */
+        val maxGain: Double = 20.0,
         val minGain: Double = 0.3,
-        /** Frames whose RMS is below noiseFloor * this are treated as noise/silence. */
-        val gateOpenFactor: Double = 2.5,
-        /** Residual gain applied to gated (noise) frames — suppresses hiss without hard cuts. */
-        val gateFloorGain: Double = 0.15,
-        val attackMs: Double = 10.0,     // fast: reduce gain on loud speech
-        val releaseMs: Double = 450.0,   // slow: raise gain on quiet speech
+        /** Gate OPENS when frame RMS ≥ noiseFloor × this. */
+        val gateOpenFactor: Double = 2.0,
+        /** Gate CLOSES only when RMS falls below noiseFloor × this (hysteresis; < open). */
+        val gateCloseFactor: Double = 1.3,
+        /** Once open, stay open at least this long so gaps between syllables don't chop speech. */
+        val gateHoldMs: Double = 300.0,
+        /** Gain during genuine (held-past) silence — a gentle duck, not a hard cut. */
+        val silenceGain: Double = 0.5,
+        /** Slow level envelope that drives the make-up gain (→ one stable gain per utterance). */
+        val envAttackMs: Double = 40.0,
+        val envReleaseMs: Double = 600.0,
+        val attackMs: Double = 40.0,     // gain smoothing: reduce gain on loud speech
+        val releaseMs: Double = 500.0,   // gain smoothing: raise gain on quiet speech
         val limiterCeiling: Double = 0.95,
     )
 
@@ -90,15 +98,47 @@ object AudioNormalizer {
         }
 
         val noiseFloor = percentile(rms, 0.10).coerceAtLeast(1e-4)
-        val gateThreshold = noiseFloor * cfg.gateOpenFactor
+        val openThresh = noiseFloor * cfg.gateOpenFactor
+        val closeThresh = noiseFloor * cfg.gateCloseFactor
+        val holdFrames = (cfg.gateHoldMs / cfg.frameMs).toInt().coerceAtLeast(1)
+
+        // ---- Gate with hysteresis + hold ------------------------------------------------
+        // A weak far-end-only call sits right at the noise floor, so a naive per-frame gate
+        // toggles on every syllable and the gain pumps ("unstable voice"). Separate open/close
+        // thresholds plus a hold keep the gate open across the short gaps inside speech.
+        val gateOpen = BooleanArray(frameCount)
+        var open = false
+        var held = 0
+        for (f in 0 until frameCount) {
+            val r = rms[f]
+            if (r >= openThresh) { open = true; held = 0 }
+            else if (open) {
+                if (r < closeThresh) { held++; if (held >= holdFrames) open = false }
+                else held = 0   // between close and open thresholds: still speech-ish, keep open
+            }
+            gateOpen[f] = open
+        }
+
+        // ---- Slow level envelope that drives the make-up gain ---------------------------
+        // Basing gain on a slow envelope (not the instantaneous frame RMS) yields ONE stable
+        // gain per utterance instead of chasing every syllable — this is what removes pumping.
+        val envAtt = 1.0 - exp(-cfg.frameMs / cfg.envAttackMs)
+        val envRel = 1.0 - exp(-cfg.frameMs / cfg.envReleaseMs)
+        val env = DoubleArray(frameCount)
+        env[0] = rms[0]
+        for (f in 1 until frameCount) {
+            val prev = env[f - 1]
+            val coef = if (rms[f] > prev) envAtt else envRel
+            env[f] = prev + (rms[f] - prev) * coef
+        }
 
         // ---- Raw target gain per frame --------------------------------------------------
         val rawGain = DoubleArray(frameCount)
         for (f in 0 until frameCount) {
-            rawGain[f] = if (rms[f] >= gateThreshold) {
-                (cfg.targetRms / rms[f]).coerceIn(cfg.minGain, cfg.maxGain)
+            rawGain[f] = if (gateOpen[f]) {
+                (cfg.targetRms / maxOf(env[f], openThresh)).coerceIn(cfg.minGain, cfg.maxGain)
             } else {
-                cfg.gateFloorGain
+                cfg.silenceGain
             }
         }
 
@@ -124,7 +164,7 @@ object AudioNormalizer {
 
         return Result(
             WavIo.PcmAudio(out, sr),
-            Diagnostics(cfg, frameLen, noiseFloor, gateThreshold, rms, rawGain, smoothGain)
+            Diagnostics(cfg, frameLen, noiseFloor, openThresh, rms, rawGain, smoothGain)
         )
     }
 

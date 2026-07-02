@@ -29,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -47,12 +48,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val WhatsAppGreen = Color(0xFF00A884)
-private val DeepGreen = Color(0xFF008069)
-private val Ink = Color(0xFF111B21)
-private val Muted = Color(0xFF667781)
-private val Canvas = Color(0xFFF7F9F9)
-private val Divider = Color(0xFFE9EDEF)
+private val StreamTeal = Color(0xFF12B8A6)
+private val DeepTeal = Color(0xFF073B3A)
+private val NightTeal = Color(0xFF062C2C)
+private val Coral = Color(0xFFFF6B5E)
+private val Ink = Color(0xFF132323)
+private val Muted = Color(0xFF667A79)
+private val Canvas = Color(0xFFF3F7F6)
+private val Divider = Color(0xFFE1EAE8)
+private val SoftTeal = Color(0xFFE1F7F3)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,8 +65,8 @@ class MainActivity : ComponentActivity() {
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                 MaterialTheme(
                     colorScheme = lightColorScheme(
-                        primary = WhatsAppGreen,
-                        secondary = DeepGreen,
+                        primary = StreamTeal,
+                        secondary = DeepTeal,
                         background = Canvas,
                         surface = Color.White,
                         onSurface = Ink
@@ -134,10 +138,13 @@ private fun HomeScreen() {
                 )
                 SearchField(query) { query = it }
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("הקלטות אחרונות", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Column {
+                        Text("הספרייה שלי", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+                        Text("כל השיחות, מסודרות במקום אחד", color = Muted, fontSize = 12.sp)
+                    }
                     Spacer(Modifier.weight(1f))
                     if (recordings.isNotEmpty()) Text("${filtered.size} שיחות", color = Muted, fontSize = 13.sp)
                 }
@@ -160,21 +167,21 @@ private fun RecordingPreferencesCard(
     onModeChange: (RecordingMode) -> Unit
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp),
-        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 14.dp),
+        shape = RoundedCornerShape(24.dp),
         color = Color.White
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    Modifier.size(42.dp).clip(CircleShape).background(Color(0xFFE7F8F3)),
+                    Modifier.size(46.dp).clip(RoundedCornerShape(15.dp)).background(SoftTeal),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Phone, null, tint = DeepGreen, modifier = Modifier.size(22.dp))
+                    Icon(Icons.Default.Phone, null, tint = DeepTeal, modifier = Modifier.size(22.dp))
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("הקלטה אוטומטית", fontWeight = FontWeight.Bold, color = Ink)
+                    Text("טייס אוטומטי", fontWeight = FontWeight.Bold, color = Ink, fontSize = 16.sp)
                     Text(
                         if (autoRecord) "ההקלטה תתחיל לבד בתחילת שיחה" else "שיחות לא יוקלטו אוטומטית",
                         color = Muted, fontSize = 13.sp
@@ -183,7 +190,7 @@ private fun RecordingPreferencesCard(
                 Switch(
                     checked = autoRecord,
                     onCheckedChange = onAutoRecordChange,
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = WhatsAppGreen)
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = StreamTeal)
                 )
             }
 
@@ -215,14 +222,14 @@ private fun RecordingModeOption(
     Surface(
         modifier = modifier.clickable { onSelected(mode) },
         shape = RoundedCornerShape(12.dp),
-        color = if (selected) Color(0xFFE7F8F3) else Canvas,
-        border = if (selected) androidx.compose.foundation.BorderStroke(1.5.dp, WhatsAppGreen) else null
+        color = if (selected) SoftTeal else Canvas,
+        border = if (selected) androidx.compose.foundation.BorderStroke(1.5.dp, StreamTeal) else null
     ) {
         Text(
             label,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 11.dp),
             textAlign = TextAlign.Center,
-            color = if (selected) DeepGreen else Muted,
+            color = if (selected) DeepTeal else Muted,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             fontSize = 13.sp,
             maxLines = 1
@@ -232,19 +239,34 @@ private fun RecordingModeOption(
 
 @Composable
 private fun Header(onRefresh: () -> Unit) {
-    Box(Modifier.fillMaxWidth().background(DeepGreen).statusBarsPadding().padding(20.dp)) {
-        Column {
+    Box(
+        Modifier.fillMaxWidth().background(
+            Brush.linearGradient(listOf(NightTeal, DeepTeal, Color(0xFF0B6661)))
+        ).statusBarsPadding().padding(horizontal = 20.dp, vertical = 22.dp)
+    ) {
+        Column(Modifier.fillMaxWidth()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Color.White.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Phone, null, tint = Color.White)
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(16.dp)).background(StreamTeal), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Call, null, tint = Color.White, modifier = Modifier.size(26.dp))
                 }
                 Spacer(Modifier.width(12.dp))
                 Column {
-                    Text("CallStream", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 24.sp)
-                    Text("כל השיחות שלך, במקום אחד", color = Color.White.copy(alpha = .76f), fontSize = 13.sp)
+                    Text("Reko", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 25.sp)
+                    Text("השיחות שחשוב לזכור", color = Color.White.copy(alpha = .72f), fontSize = 13.sp)
                 }
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "רענון", tint = Color.White) }
+                FilledIconButton(
+                    onClick = onRefresh,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = Color.White.copy(alpha = .12f), contentColor = Color.White
+                    )
+                ) { Icon(Icons.Default.Refresh, "רענון") }
+            }
+            Spacer(Modifier.height(24.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).clip(CircleShape).background(Coral))
+                Spacer(Modifier.width(8.dp))
+                Text("מוכן להקלטה הבאה", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             }
         }
     }
@@ -255,16 +277,16 @@ private fun SetupSummary(readyCount: Int, expanded: Boolean, onClick: () -> Unit
     val allReady = readyCount == 3
     Surface(
         modifier = Modifier.fillMaxWidth().padding(16.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp), color = if (allReady) Color(0xFFE7F8F3) else Color(0xFFFFF6E5)
+        shape = RoundedCornerShape(24.dp), color = if (allReady) SoftTeal else Color(0xFFFFF3E8)
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).clip(CircleShape).background(if (allReady) WhatsAppGreen else Color(0xFFFFB020)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(46.dp).clip(RoundedCornerShape(15.dp)).background(if (allReady) StreamTeal else Color(0xFFFFA24A)), contentAlignment = Alignment.Center) {
                 Icon(if (allReady) Icons.Default.Check else Icons.Default.Settings, null, tint = Color.White, modifier = Modifier.size(22.dp))
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(if (allReady) "ההקלטה האוטומטית פעילה" else "נשאר להשלים את ההגדרה", fontWeight = FontWeight.Bold, color = Ink)
-                Text(if (allReady) "אנחנו מוכנים לשיחה הבאה" else "$readyCount מתוך 3 שלבים הושלמו", color = Muted, fontSize = 13.sp)
+                Text(if (allReady) "המערכת מוכנה" else "מסיימים הגדרה", fontWeight = FontWeight.Bold, color = Ink, fontSize = 16.sp)
+                Text(if (allReady) "כל ההרשאות פעילות" else "$readyCount מתוך 3 שלבים הושלמו", color = Muted, fontSize = 13.sp)
             }
             Icon(if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, "פרטי הגדרה", tint = Muted)
         }
@@ -287,10 +309,10 @@ private fun SetupPanel(permissions: Boolean, overlay: Boolean, accessibility: Bo
 @Composable
 private fun SetupRow(label: String, done: Boolean, onFix: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(enabled = !done, onClick = onFix).padding(vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(if (done) Icons.Default.CheckCircle else Icons.Default.Settings, null, tint = if (done) WhatsAppGreen else Color(0xFFFFB020), modifier = Modifier.size(22.dp))
+        Icon(if (done) Icons.Default.CheckCircle else Icons.Default.Settings, null, tint = if (done) StreamTeal else Color(0xFFFFA24A), modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(12.dp))
         Text(label, Modifier.weight(1f), color = Ink, fontSize = 14.sp)
-        if (!done) Text("הגדרה", color = DeepGreen, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        if (!done) Text("הגדרה", color = DeepTeal, fontWeight = FontWeight.Bold, fontSize = 13.sp)
     }
 }
 
@@ -299,10 +321,10 @@ private fun SearchField(query: String, onChange: (String) -> Unit) {
     TextField(
         value = query, onValueChange = onChange,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        placeholder = { Text("חיפוש לפי איש קשר", color = Muted) },
+        placeholder = { Text("חיפוש בהקלטות", color = Muted) },
         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
         trailingIcon = if (query.isNotEmpty()) {{ IconButton(onClick = { onChange("") }) { Icon(Icons.Default.Close, "נקה", tint = Muted) } }} else null,
-        singleLine = true, shape = RoundedCornerShape(16.dp),
+        singleLine = true, shape = RoundedCornerShape(20.dp),
         colors = TextFieldDefaults.colors(
             focusedContainerColor = Color.White, unfocusedContainerColor = Color.White,
             focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
@@ -316,52 +338,51 @@ private fun RecordingRow(rec: Recording) {
     var playing by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { player?.release() } }
 
-    Row(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(52.dp).clip(CircleShape).background(avatarColor(rec.label)), contentAlignment = Alignment.Center) {
-            Text(rec.label.trim().firstOrNull()?.uppercase() ?: "?", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        }
-        Spacer(Modifier.width(13.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(rec.label, Modifier.weight(1f), color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1)
-                Text(formatTime(rec.startedAtMillis), color = Muted, fontSize = 12.sp)
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+        shape = RoundedCornerShape(22.dp), color = Color.White,
+        shadowElevation = 1.dp
+    ) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(50.dp).clip(RoundedCornerShape(17.dp)).background(avatarColor(rec.label)), contentAlignment = Alignment.Center) {
+                Text(rec.label.trim().firstOrNull()?.uppercase() ?: "?", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             }
-            Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (rec.type == CallType.WHATSAPP) Icons.Default.Call else Icons.Default.Phone, null, tint = WhatsAppGreen, modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("${typeLabel(rec.type)} · ${DateUtils.formatElapsedTime(rec.durationMillis / 1000)}", color = Muted, fontSize = 13.sp)
-            }
-        }
-        Spacer(Modifier.width(8.dp))
-        val ctx = LocalContext.current
-        FilledIconButton(
-            onClick = { shareMetrics(ctx, rec) },
-            modifier = Modifier.size(42.dp),
-            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFF0F2F5), contentColor = Muted)
-        ) { Icon(Icons.Default.Share, "ייצוא נתוני עיבוד", modifier = Modifier.size(19.dp)) }
-        Spacer(Modifier.width(8.dp))
-        FilledIconButton(
-            onClick = {
-                if (playing) { player?.stop(); player?.release(); player = null; playing = false }
-                else player = MediaPlayer().apply {
-                    setDataSource(rec.wavPath)
-                    setOnCompletionListener { playing = false; release(); player = null }
-                    prepare(); start(); playing = true
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(rec.label, color = Ink, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1)
+                Spacer(Modifier.height(5.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Call, null, tint = StreamTeal, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("${typeLabel(rec.type)} · ${DateUtils.formatElapsedTime(rec.durationMillis / 1000)} · ${formatTime(rec.startedAtMillis)}", color = Muted, fontSize = 12.sp)
                 }
-            },
-            modifier = Modifier.size(42.dp),
-            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFE7F8F3), contentColor = DeepGreen)
-        ) { Icon(if (playing) Icons.Default.Close else Icons.Default.PlayArrow, if (playing) "עצירה" else "ניגון") }
+            }
+            val ctx = LocalContext.current
+            IconButton(onClick = { shareMetrics(ctx, rec) }, modifier = Modifier.size(38.dp)) {
+                Icon(Icons.Default.Share, "ייצוא נתוני עיבוד", tint = Muted, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(4.dp))
+            FilledIconButton(
+                onClick = {
+                    if (playing) { player?.stop(); player?.release(); player = null; playing = false }
+                    else player = MediaPlayer().apply {
+                        setDataSource(rec.wavPath)
+                        setOnCompletionListener { playing = false; release(); player = null }
+                        prepare(); start(); playing = true
+                    }
+                },
+                modifier = Modifier.size(42.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(containerColor = if (playing) Coral else DeepTeal, contentColor = Color.White)
+            ) { Icon(if (playing) Icons.Default.Close else Icons.Default.PlayArrow, if (playing) "עצירה" else "ניגון") }
+        }
     }
-    HorizontalDivider(Modifier.padding(start = 81.dp), color = Divider)
 }
 
 @Composable
 private fun EmptyState(hasQuery: Boolean) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 36.dp, vertical = 52.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(92.dp).clip(CircleShape).background(Color(0xFFE7F8F3)), contentAlignment = Alignment.Center) {
-            Icon(if (hasQuery) Icons.Default.Search else Icons.Default.Phone, null, tint = WhatsAppGreen, modifier = Modifier.size(42.dp))
+        Box(Modifier.size(92.dp).clip(RoundedCornerShape(30.dp)).background(SoftTeal), contentAlignment = Alignment.Center) {
+            Icon(if (hasQuery) Icons.Default.Search else Icons.Default.Phone, null, tint = DeepTeal, modifier = Modifier.size(42.dp))
         }
         Spacer(Modifier.height(18.dp))
         Text(if (hasQuery) "לא מצאנו הקלטות" else "עדיין אין כאן הקלטות", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Ink)
@@ -370,7 +391,7 @@ private fun EmptyState(hasQuery: Boolean) {
     }
 }
 
-private fun avatarColor(label: String): Color = listOf(Color(0xFF7E57C2), Color(0xFF0097A7), Color(0xFFE57373), Color(0xFF5C6BC0), DeepGreen)[kotlin.math.abs(label.hashCode() % 5)]
+private fun avatarColor(label: String): Color = listOf(Color(0xFF6750A4), Color(0xFF087F8C), Coral, Color(0xFF3F6B9C), DeepTeal)[kotlin.math.abs(label.hashCode() % 5)]
 private fun hasAllPermissions(context: Context) = RUNTIME_PERMISSIONS.all { ContextCompat.checkSelfPermission(context, it) == android.content.pm.PackageManager.PERMISSION_GRANTED }
 private fun isAccessibilityEnabled(context: Context): Boolean {
     val enabled = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
@@ -378,11 +399,17 @@ private fun isAccessibilityEnabled(context: Context): Boolean {
     return enabled.split(':').any { it.equals(service, ignoreCase = true) }
 }
 /**
- * Shares the two per-second metrics CSVs (raw + processed) of a recording, so they can be
- * uploaded to an AI/analysis tool to see where the normalizer worked well and where not.
+ * Shares everything needed to analyze a recording offline: the raw (un-normalized) WAV, the
+ * processed WAV, and the two per-second metrics CSVs. With the raw WAV the processing can be
+ * re-tuned on the real captured signal, not just its metrics.
  */
 private fun shareMetrics(context: Context, rec: Recording) {
-    val files = listOf(rec.rawMetricsFile(), rec.processedMetricsFile()).filter { it.exists() }
+    val files = listOf(
+        rec.rawWavFile(),        // un-normalized capture
+        rec.file,                // processed WAV (what you hear in the app)
+        rec.rawMetricsFile(),
+        rec.processedMetricsFile(),
+    ).filter { it.exists() }
     if (files.isEmpty()) {
         Toast.makeText(context, "אין קובצי נתונים להקלטה הזו (הוקלטה לפני העדכון)", Toast.LENGTH_LONG).show()
         return
@@ -391,11 +418,11 @@ private fun shareMetrics(context: Context, rec: Recording) {
         FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", it)
     })
     val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-        type = "text/csv"
+        type = "*/*"  // mixed: audio/wav + text/csv
         putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(Intent.createChooser(intent, "ייצוא נתוני הקלטה (${files.size} קבצים)"))
+    context.startActivity(Intent.createChooser(intent, "ייצוא הקלטה + נתונים (${files.size} קבצים)"))
 }
 
 private fun loadRecordings(context: Context): List<Recording> {

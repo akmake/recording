@@ -34,6 +34,9 @@ data class Recording(
     fun rawMetricsFile(): File = File(wavPath.removeSuffix(".wav") + ".raw.csv")
     fun processedMetricsFile(): File = File(wavPath.removeSuffix(".wav") + ".processed.csv")
 
+    /** The un-normalized capture kept alongside the processed WAV (may not exist for old recordings). */
+    fun rawWavFile(): File = File(wavPath.removeSuffix(".wav") + ".raw.wav")
+
     companion object {
         fun fromSidecar(json: File): Recording? = try {
             val o = JSONObject(json.readText())

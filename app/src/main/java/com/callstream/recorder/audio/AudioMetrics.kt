@@ -50,7 +50,7 @@ object AudioMetrics {
     ) {
         val cfg = diag.cfg
         val durationS = audio.samples.size.toDouble() / audio.sampleRate
-        sb.appendLine("# CallStream audio metrics v1")
+        sb.appendLine("# Reko audio metrics v1")
         sb.appendLine("# recording=$recordingName")
         sb.appendLine("# stage=${if (stage == Stage.RAW) "raw (before normalization)" else "processed (after normalization)"}")
         sb.appendLine("# audio_source=$audioSource (capture path — determines how much of the far end is present in the raw signal)")

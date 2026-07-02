@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "GoodStart"
+rootProject.name = "Reko"
 include ':app'

@@ -265,12 +265,19 @@ class CallRecordingService : Service() {
                 .replace(Regex("[^\\p{L}\\p{N}_-]"), "_").take(40)
             val outWav = File(outDir, "${stamp}_$safeLabel.wav")
             WavIo.writePcm16(outWav, normalized)
-            rawWav.delete()
+            val baseName = outWav.name.removeSuffix(".wav")
+
+            // Keep the pre-normalization audio next to the output so the processing can be
+            // re-tuned on the REAL captured signal, not just its metrics. Moved out of
+            // cacheDir into recordings/ (deleting it here is what threw away our raw material).
+            val rawKept = File(outDir, "$baseName.raw.wav")
+            if (!rawWav.renameTo(rawKept)) {
+                rawWav.copyTo(rawKept, overwrite = true); rawWav.delete()
+            }
 
             // Per-second metrics sidecars (raw vs processed) — exportable from the UI so
             // the normalizer's behavior on real calls can be analyzed offline.
             try {
-                val baseName = outWav.name.removeSuffix(".wav")
                 AudioMetrics.writeCsv(
                     File(outDir, "$baseName.raw.csv"),
                     loaded, result.diagnostics, AudioMetrics.Stage.RAW, outWav.name, usedSource
