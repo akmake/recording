@@ -40,13 +40,17 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.app.NotificationManagerCompat
 import com.callstream.recorder.call.CallType
 import com.callstream.recorder.call.Recording
 import com.callstream.recorder.service.CallAccessibilityService
+import com.callstream.recorder.service.CallRecordingService
+import com.callstream.recorder.diagnostics.AppLog
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 private val StreamTeal = Color(0xFF12B8A6)
 private val DeepTeal = Color(0xFF073B3A)
@@ -96,6 +100,8 @@ private fun HomeScreen() {
     var showSetup by remember { mutableStateOf(false) }
     var autoRecord by remember { mutableStateOf(RecorderPreferences.isAutoRecordEnabled(context)) }
     var recordingMode by remember { mutableStateOf(RecorderPreferences.recordingMode(context)) }
+    var showDiagnostics by remember { mutableStateOf(false) }
+    var logText by remember { mutableStateOf("") }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -103,7 +109,8 @@ private fun HomeScreen() {
 
     val overlayGranted = Settings.canDrawOverlays(context)
     val accessibilityOn = isAccessibilityEnabled(context)
-    val readyCount = listOf(permissionsGranted, overlayGranted, accessibilityOn).count { it }
+    val notificationAccess = hasNotificationListenerAccess(context)
+    val readyCount = listOf(permissionsGranted, overlayGranted, accessibilityOn, notificationAccess).count { it }
     val filtered = recordings.filter { it.label.contains(query, ignoreCase = true) }
 
     Scaffold(containerColor = Canvas) { padding ->
@@ -117,24 +124,46 @@ private fun HomeScreen() {
                 if (showSetup) {
                     SetupPanel(
                         permissionsGranted, overlayGranted, accessibilityOn,
+                        notificationAccess = notificationAccess,
                         onPermissions = { permissionLauncher.launch(RUNTIME_PERMISSIONS) },
                         onOverlay = {
                             context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")))
                         },
-                        onAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                        onAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                        onNotificationAccess = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
                     )
                 }
                 RecordingPreferencesCard(
                     autoRecord = autoRecord,
                     recordingMode = recordingMode,
+                    overlayGranted = overlayGranted,
                     onAutoRecordChange = {
                         autoRecord = it
                         RecorderPreferences.setAutoRecordEnabled(context, it)
+                        if (it) stopManualStandby(context) else startManualStandby(context)
                     },
                     onModeChange = {
                         recordingMode = it
                         RecorderPreferences.setRecordingMode(context, it)
                     }
+                )
+                LaunchedEffect(Unit) {
+                    if (!autoRecord) startManualStandby(context)
+                }
+                ManualFallbackCard(
+                    onStart = { startManualRecording(context) },
+                    onStop = { stopManualRecording(context) }
+                )
+                DiagnosticsCard(
+                    expanded = showDiagnostics,
+                    logs = logText,
+                    onToggle = {
+                        showDiagnostics = !showDiagnostics
+                        if (showDiagnostics) logText = AppLog.tail(context)
+                    },
+                    onRefresh = { logText = AppLog.tail(context) },
+                    onShare = { shareLogs(context) },
+                    onClear = { AppLog.clear(context); logText = "" }
                 )
                 SearchField(query) { query = it }
                 Row(
@@ -153,7 +182,7 @@ private fun HomeScreen() {
             if (filtered.isEmpty()) {
                 item { EmptyState(hasQuery = query.isNotBlank()) }
             } else {
-                items(filtered, key = { it.wavPath }) { recording -> RecordingRow(recording) }
+                items(filtered, key = { it.wavPath }) { recording -> RecordingPlayerRow(recording) }
             }
         }
     }
@@ -163,6 +192,7 @@ private fun HomeScreen() {
 private fun RecordingPreferencesCard(
     autoRecord: Boolean,
     recordingMode: RecordingMode,
+    overlayGranted: Boolean,
     onAutoRecordChange: (Boolean) -> Unit,
     onModeChange: (RecordingMode) -> Unit
 ) {
@@ -183,7 +213,8 @@ private fun RecordingPreferencesCard(
                 Column(Modifier.weight(1f)) {
                     Text("טייס אוטומטי", fontWeight = FontWeight.Bold, color = Ink, fontSize = 16.sp)
                     Text(
-                        if (autoRecord) "ההקלטה תתחיל לבד בתחילת שיחה" else "שיחות לא יוקלטו אוטומטית",
+                        if (autoRecord) "ההקלטה תתחיל לבד בתחילת שיחה"
+                        else "כפתור הקלטה יופיע בזמן השיחה — לחיצה מתחילה להקליט",
                         color = Muted, fontSize = 13.sp
                     )
                 }
@@ -192,6 +223,23 @@ private fun RecordingPreferencesCard(
                     onCheckedChange = onAutoRecordChange,
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = StreamTeal)
                 )
+            }
+
+            // Manual recording leans on the floating button; without the overlay permission the
+            // only way in is the notification, so say so instead of letting them hunt for it.
+            AnimatedVisibility(visible = !autoRecord && !overlayGranted) {
+                Row(
+                    Modifier.padding(top = 12.dp).clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFFFF3E8)).padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Info, null, tint = Color(0xFFFFA24A), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "בלי הרשאת \"חלון הקלטה צף\" הכפתור יופיע רק בהתראה שנפתחת בזמן השיחה",
+                        color = Ink, fontSize = 12.sp, lineHeight = 16.sp
+                    )
+                }
             }
 
             AnimatedVisibility(visible = autoRecord) {
@@ -274,7 +322,7 @@ private fun Header(onRefresh: () -> Unit) {
 
 @Composable
 private fun SetupSummary(readyCount: Int, expanded: Boolean, onClick: () -> Unit) {
-    val allReady = readyCount == 3
+    val allReady = readyCount == 4
     Surface(
         modifier = Modifier.fillMaxWidth().padding(16.dp).clickable(onClick = onClick),
         shape = RoundedCornerShape(24.dp), color = if (allReady) SoftTeal else Color(0xFFFFF3E8)
@@ -286,7 +334,7 @@ private fun SetupSummary(readyCount: Int, expanded: Boolean, onClick: () -> Unit
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(if (allReady) "המערכת מוכנה" else "מסיימים הגדרה", fontWeight = FontWeight.Bold, color = Ink, fontSize = 16.sp)
-                Text(if (allReady) "כל ההרשאות פעילות" else "$readyCount מתוך 3 שלבים הושלמו", color = Muted, fontSize = 13.sp)
+                Text(if (allReady) "כל מנגנוני הגיבוי פעילים" else "$readyCount מתוך 4 שלבים הושלמו", color = Muted, fontSize = 13.sp)
             }
             Icon(if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, "פרטי הגדרה", tint = Muted)
         }
@@ -294,7 +342,7 @@ private fun SetupSummary(readyCount: Int, expanded: Boolean, onClick: () -> Unit
 }
 
 @Composable
-private fun SetupPanel(permissions: Boolean, overlay: Boolean, accessibility: Boolean, onPermissions: () -> Unit, onOverlay: () -> Unit, onAccessibility: () -> Unit) {
+private fun SetupPanel(permissions: Boolean, overlay: Boolean, accessibility: Boolean, notificationAccess: Boolean, onPermissions: () -> Unit, onOverlay: () -> Unit, onAccessibility: () -> Unit, onNotificationAccess: () -> Unit) {
     Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp), shape = RoundedCornerShape(18.dp), color = Color.White) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             SetupRow("הרשאות שיחה ומיקרופון", permissions, onPermissions)
@@ -302,6 +350,8 @@ private fun SetupPanel(permissions: Boolean, overlay: Boolean, accessibility: Bo
             SetupRow("חלון הקלטה צף", overlay, onOverlay)
             HorizontalDivider(color = Divider)
             SetupRow("זיהוי שיחות WhatsApp", accessibility, onAccessibility)
+            HorizontalDivider(color = Divider)
+            SetupRow("גיבוי WhatsApp דרך התראות", notificationAccess, onNotificationAccess)
         }
     }
 }
@@ -313,6 +363,74 @@ private fun SetupRow(label: String, done: Boolean, onFix: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Text(label, Modifier.weight(1f), color = Ink, fontSize = 14.sp)
         if (!done) Text("הגדרה", color = DeepTeal, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun ManualFallbackCard(onStart: () -> Unit, onStop: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 14.dp),
+        shape = RoundedCornerShape(20.dp), color = Color.White
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("שליטה ידנית — תמיד זמינה", fontWeight = FontWeight.Bold, color = Ink, fontSize = 16.sp)
+            Text("עובד גם אם זיהוי השיחה, WhatsApp או החלון הצף נכשלו.", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = onStart, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Mic, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("הקלט עכשיו")
+                }
+                OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Stop, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("עצור ושמור")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticsCard(
+    expanded: Boolean,
+    logs: String,
+    onToggle: () -> Unit,
+    onRefresh: () -> Unit,
+    onShare: () -> Unit,
+    onClear: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 14.dp),
+        shape = RoundedCornerShape(20.dp), color = Color.White
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(Modifier.fillMaxWidth().clickable(onClick = onToggle), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.BugReport, null, tint = DeepTeal)
+                Spacer(Modifier.width(10.dp))
+                Text("אבחון ולוגים", Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Ink)
+                Icon(if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, null, tint = Muted)
+            }
+            AnimatedVisibility(expanded) {
+                Column {
+                    Spacer(Modifier.height(12.dp))
+                    Surface(color = Canvas, shape = RoundedCornerShape(12.dp)) {
+                        Text(
+                            if (logs.isBlank()) "עדיין אין אירועים שמורים" else logs,
+                            Modifier.fillMaxWidth().padding(10.dp), color = Ink, fontSize = 10.sp,
+                            maxLines = 18
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = onRefresh) { Text("רענון") }
+                        TextButton(onClick = onShare) { Text("שיתוף") }
+                        TextButton(onClick = onClear) { Text("ניקוי") }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -330,6 +448,173 @@ private fun SearchField(query: String, onChange: (String) -> Unit) {
             focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
         )
     )
+}
+
+@Composable
+private fun RecordingPlayerRow(rec: Recording) {
+    var player by remember { mutableStateOf<MediaPlayer?>(null) }
+    var playing by remember { mutableStateOf(false) }
+    var positionMs by remember { mutableStateOf(0) }
+    var durationMs by remember { mutableStateOf(rec.durationMillis.toInt().coerceAtLeast(0)) }
+    var speed by remember { mutableStateOf(1f) }
+    var dragging by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            player?.release()
+            player = null
+        }
+    }
+
+    LaunchedEffect(player, playing, dragging) {
+        while (player != null && playing && !dragging) {
+            positionMs = player?.currentPosition ?: positionMs
+            delay(250)
+        }
+    }
+
+    fun applySpeed(mediaPlayer: MediaPlayer, playbackSpeed: Float) {
+        runCatching {
+            mediaPlayer.playbackParams = mediaPlayer.playbackParams.setSpeed(playbackSpeed)
+        }
+    }
+
+    fun ensurePlayer(): MediaPlayer {
+        player?.let { return it }
+        return MediaPlayer().apply {
+            setDataSource(rec.wavPath)
+            setOnCompletionListener {
+                playing = false
+                positionMs = 0
+                seekTo(0)
+            }
+            prepare()
+            durationMs = duration.coerceAtLeast(rec.durationMillis.toInt())
+            if (positionMs > 0) seekTo(positionMs.coerceAtMost(durationMs))
+            applySpeed(this, speed)
+            player = this
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+        shape = RoundedCornerShape(22.dp), color = Color.White,
+        shadowElevation = 1.dp
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(50.dp).clip(RoundedCornerShape(17.dp)).background(avatarColor(rec.label)), contentAlignment = Alignment.Center) {
+                    Text(rec.label.trim().firstOrNull()?.uppercase() ?: "?", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(13.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(rec.label, color = Ink, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1)
+                    Spacer(Modifier.height(5.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Call, null, tint = StreamTeal, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("${typeLabel(rec.type)} - ${DateUtils.formatElapsedTime(rec.durationMillis / 1000)} - ${formatTime(rec.startedAtMillis)}", color = Muted, fontSize = 12.sp)
+                    }
+                }
+                val ctx = LocalContext.current
+                IconButton(onClick = { shareMetrics(ctx, rec) }, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Default.Share, "share processing data", tint = Muted, modifier = Modifier.size(20.dp))
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Slider(
+                value = positionMs.coerceIn(0, durationMs).toFloat(),
+                onValueChange = {
+                    dragging = true
+                    positionMs = it.toInt()
+                },
+                onValueChangeFinished = {
+                    player?.seekTo(positionMs.coerceIn(0, durationMs))
+                    dragging = false
+                },
+                valueRange = 0f..durationMs.coerceAtLeast(1).toFloat(),
+                colors = SliderDefaults.colors(
+                    thumbColor = DeepTeal,
+                    activeTrackColor = StreamTeal,
+                    inactiveTrackColor = Divider
+                )
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(formatPlaybackTime(positionMs), color = Muted, fontSize = 12.sp)
+                Spacer(Modifier.weight(1f))
+                Text(formatPlaybackTime(durationMs), color = Muted, fontSize = 12.sp)
+            }
+
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                FilledIconButton(
+                    onClick = {
+                        val mediaPlayer = ensurePlayer()
+                        if (playing) {
+                            mediaPlayer.pause()
+                            positionMs = mediaPlayer.currentPosition
+                            playing = false
+                        } else {
+                            applySpeed(mediaPlayer, speed)
+                            mediaPlayer.start()
+                            playing = true
+                        }
+                    },
+                    modifier = Modifier.size(42.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = if (playing) Coral else DeepTeal, contentColor = Color.White)
+                ) {
+                    if (playing) Text("II", fontWeight = FontWeight.Bold, fontSize = 16.sp) else Icon(Icons.Default.PlayArrow, "play")
+                }
+
+                Spacer(Modifier.width(8.dp))
+                IconButton(
+                    onClick = {
+                        player?.pause()
+                        player?.seekTo(0)
+                        positionMs = 0
+                        playing = false
+                    },
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Text("■", color = Muted, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                }
+
+                Spacer(Modifier.width(8.dp))
+                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End)) {
+                    listOf(0.75f, 1f, 1.5f, 2f).forEach { option ->
+                        SpeedOption(
+                            label = speedLabel(option),
+                            selected = speed == option,
+                            onClick = {
+                                speed = option
+                                player?.let { applySpeed(it, option) }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpeedOption(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.height(32.dp).clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        color = if (selected) SoftTeal else Canvas,
+        border = if (selected) androidx.compose.foundation.BorderStroke(1.dp, StreamTeal) else null
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+            color = if (selected) DeepTeal else Muted,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            fontSize = 12.sp,
+            maxLines = 1
+        )
+    }
 }
 
 @Composable
@@ -398,6 +683,56 @@ private fun isAccessibilityEnabled(context: Context): Boolean {
     val service = "${context.packageName}/${CallAccessibilityService::class.java.name}"
     return enabled.split(':').any { it.equals(service, ignoreCase = true) }
 }
+
+private fun hasNotificationListenerAccess(context: Context): Boolean =
+    NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+
+private fun startManualStandby(context: Context) {
+    val intent = Intent(context, CallRecordingService::class.java).apply { action = CallRecordingService.ACTION_ARM }
+    AppLog.i(context, "manual_standby_requested")
+    runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
+        else context.startService(intent)
+    }.onFailure { AppLog.e(context, "manual_standby_failed", error = it) }
+}
+
+private fun stopManualStandby(context: Context) {
+    runCatching { context.startService(Intent(context, CallRecordingService::class.java).apply { action = CallRecordingService.ACTION_STOP }) }
+}
+
+private fun startManualRecording(context: Context) {
+    val intent = Intent(context, CallRecordingService::class.java).apply {
+        action = CallRecordingService.ACTION_START
+        putExtra(CallRecordingService.EXTRA_MANUAL, true)
+        putExtra(CallRecordingService.EXTRA_TYPE, CallType.UNKNOWN.name)
+    }
+    AppLog.i(context, "manual_app_start_pressed")
+    runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
+        else context.startService(intent)
+    }.onFailure { AppLog.e(context, "manual_app_start_failed", error = it) }
+}
+
+private fun stopManualRecording(context: Context) {
+    AppLog.i(context, "manual_app_stop_pressed")
+    runCatching {
+        context.startService(Intent(context, CallRecordingService::class.java).apply {
+            action = CallRecordingService.ACTION_STOP
+            putExtra(CallRecordingService.EXTRA_REARM, true)
+        })
+    }.onFailure { AppLog.e(context, "manual_app_stop_failed", error = it) }
+}
+
+private fun shareLogs(context: Context) {
+    val file = AppLog.file(context)
+    if (!file.exists()) return
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }, "שיתוף לוגים של Reko"))
+}
 /**
  * Shares everything needed to analyze a recording offline: the raw (un-normalized) WAV, the
  * processed WAV, and the two per-second metrics CSVs. With the raw WAV the processing can be
@@ -430,6 +765,9 @@ private fun loadRecordings(context: Context): List<Recording> {
     return dir.listFiles { file -> file.extension == "json" }?.mapNotNull(Recording::fromSidecar)?.filter { File(it.wavPath).exists() }?.sortedByDescending { it.startedAtMillis } ?: emptyList()
 }
 private fun typeLabel(type: CallType) = when (type) { CallType.CELLULAR -> "שיחה סלולרית"; CallType.WHATSAPP -> "WhatsApp"; CallType.UNKNOWN -> "שיחה" }
+private fun formatPlaybackTime(millis: Int): String = DateUtils.formatElapsedTime((millis / 1000).toLong())
+private fun speedLabel(speed: Float): String = if (speed % 1f == 0f) "${speed.toInt()}x" else "${speed}x"
+
 private fun formatTime(millis: Long): String {
     val date = Date(millis)
     val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date()) == SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(date)

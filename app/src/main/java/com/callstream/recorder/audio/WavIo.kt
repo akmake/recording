@@ -2,6 +2,8 @@ package com.callstream.recorder.audio
 
 import java.io.File
 import java.io.RandomAccessFile
+import java.io.BufferedOutputStream
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -110,5 +112,44 @@ object WavIo {
             out.putShort(v.toShort())
         }
         file.writeBytes(out.array())
+    }
+
+    /**
+     * Processes a canonical mono PCM16 WAV in bounded chunks. This keeps long calls off the heap:
+     * a 30-minute recording never becomes one giant ByteArray/FloatArray.
+     */
+    fun processMonoPcm16InChunks(
+        input: File,
+        output: File,
+        sampleRate: Int = 44100,
+        secondsPerChunk: Int = 15,
+        transform: (PcmAudio) -> PcmAudio,
+    ) {
+        val chunkBytes = sampleRate * secondsPerChunk * 2
+        var written = 0L
+        RandomAccessFile(input, "r").use { source ->
+            require(source.length() >= 44) { "WAV too short: ${input.name}" }
+            source.seek(44)
+            BufferedOutputStream(FileOutputStream(output)).use { sink ->
+                sink.write(ByteArray(44))
+                val bytes = ByteArray(chunkBytes)
+                while (true) {
+                    val read = source.read(bytes)
+                    if (read <= 0) break
+                    val evenRead = read - (read % 2)
+                    val bb = ByteBuffer.wrap(bytes, 0, evenRead).order(ByteOrder.LITTLE_ENDIAN)
+                    val samples = FloatArray(evenRead / 2)
+                    for (i in samples.indices) samples[i] = bb.short.toFloat() / 32768f
+                    val processed = transform(PcmAudio(samples, sampleRate)).samples
+                    val out = ByteBuffer.allocate(processed.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+                    for (sample in processed) {
+                        out.putShort((sample.coerceIn(-1f, 1f) * 32767f).toInt().toShort())
+                    }
+                    sink.write(out.array())
+                    written += out.position()
+                }
+            }
+        }
+        writeHeaderInPlace(output, sampleRate, 1, 16, written)
     }
 }

@@ -2,4 +2,5 @@
 <paths>
     <!-- getExternalFilesDir(null)/recordings — WAVs, JSON sidecars, metrics CSVs -->
     <external-files-path name="recordings" path="recordings/" />
+    <files-path name="diagnostic_logs" path="logs/" />
 </paths>

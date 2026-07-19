@@ -4,8 +4,13 @@
     <string name="perm_desc">Reko requires permissions to record audio and display an overlay during calls.</string>
     <string name="start_service">Start Service</string>
     <string name="stop_service">Stop Service</string>
-    <string name="recording_notification_title">Reko is Active</string>
+    <string name="recording_notification_title">Reko פעיל</string>
     <string name="recording_notification_text">Waiting for a call to record...</string>
-    <string name="recording_in_progress">Recording in progress...</string>
+    <string name="recording_in_progress">מקליט…</string>
+    <!-- Call is up, nothing captured yet: the state the manual record button lives in. -->
+    <string name="recording_armed">שיחה פעילה — מוכן להקלטה</string>
+    <string name="tap_to_record">הקלט</string>
+    <string name="action_start_recording">התחל הקלטה</string>
+    <string name="action_stop_recording">עצור ושמור</string>
     <string name="grant_permissions">Grant Permissions</string>
 </resources>

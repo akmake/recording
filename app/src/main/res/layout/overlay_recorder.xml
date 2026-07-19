@@ -9,11 +9,16 @@
     android:orientation="horizontal"
     android:padding="4dp">
 
+    <!-- Toggles the capture: record when armed, stop-and-save while recording. Painted and wired
+         at runtime by CallRecordingService.renderOverlay(). -->
     <ImageView
         android:id="@+id/btn_record"
         android:layout_width="40dp"
         android:layout_height="40dp"
         android:background="@android:color/transparent"
+        android:clickable="true"
+        android:contentDescription="@string/action_start_recording"
+        android:focusable="true"
         android:padding="8dp"
         android:src="@android:drawable/ic_btn_speak_now"
         android:tint="#FFFFFF" />
@@ -24,7 +29,7 @@
         android:layout_height="wrap_content"
         android:paddingStart="8dp"
         android:paddingEnd="12dp"
-        android:text="הקלט"
+        android:text="@string/tap_to_record"
         android:textColor="#FFFFFF"
         android:textSize="14sp"
         android:textStyle="bold" />

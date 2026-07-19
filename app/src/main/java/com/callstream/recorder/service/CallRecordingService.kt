@@ -3,6 +3,7 @@ package com.callstream.recorder.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -24,12 +25,14 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.callstream.recorder.R
+import com.callstream.recorder.RecorderPreferences
 import com.callstream.recorder.audio.AudioMetrics
 import com.callstream.recorder.audio.AudioNormalizer
 import com.callstream.recorder.audio.NoiseReducer
 import com.callstream.recorder.audio.WavIo
 import com.callstream.recorder.call.CallType
 import com.callstream.recorder.call.Recording
+import com.callstream.recorder.diagnostics.AppLog
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -52,11 +55,30 @@ class CallRecordingService : Service() {
         const val EXTRA_NAME = "extra_name"
         const val EXTRA_NUMBER = "extra_number"
         const val EXTRA_TYPE = "extra_type"
+        const val EXTRA_LOG_WATERMARK = "extra_log_watermark"
         const val ACTION_START = "com.callstream.recorder.START"
         const val ACTION_STOP = "com.callstream.recorder.STOP"
+        // A call is up but auto-record is off for it: come up WITHOUT capturing, just to put a
+        // record button on screen. Without this there is no UI at all during such a call, so
+        // recording by hand is impossible.
+        const val ACTION_ARM = "com.callstream.recorder.ARM"
+        // Sent by CallAccessibilityService mid-call when it scrapes the name/number off the
+        // in-call screen — the live, permission-free source of the label.
+        const val ACTION_UPDATE_LABEL = "com.callstream.recorder.UPDATE_LABEL"
+        const val ACTION_HIDE_OVERLAY = "com.callstream.recorder.HIDE_OVERLAY"
+        // Set on ACTION_STOP by the user's own stop button: the call is still up, so once the
+        // segment is saved we go back to ARMED instead of tearing down — the user can record
+        // another stretch of the same call. A call-end stop carries no such flag.
+        const val EXTRA_REARM = "extra_rearm"
+        const val EXTRA_CALL_ENDED = "extra_call_ended"
+        const val EXTRA_MANUAL = "extra_manual"
 
         private const val CHANNEL_ID = "callstream_recording"
         private const val NOTIF_ID = 42
+
+        // Overlay record button: white when idle, coral while capturing (matches the app's accent).
+        private const val COLOR_IDLE = 0xFFFFFFFF.toInt()
+        private const val COLOR_RECORDING = 0xFFFF6B5E.toInt()
 
         private const val SAMPLE_RATE = 44100
         // Preference order for capturing RAW material (our AudioNormalizer balances it later):
@@ -76,7 +98,14 @@ class CallRecordingService : Service() {
         )
     }
 
+    /** ARMED = call up, button on screen, nothing captured yet. RECORDING = capturing. */
+    private enum class State { ARMED, RECORDING }
+
     @Volatile private var recording = false
+    // null = the service isn't up for a call (a bare ACTION_STOP/UPDATE_LABEL may still have
+    // instantiated it); anything else is what the overlay and the notification are painted for.
+    @Volatile private var state: State? = null
+    @Volatile private var reArmAfterStop = false
     private var recordThread: Thread? = null
     private var windowManager: WindowManager? = null
     private var overlay: View? = null
@@ -87,32 +116,109 @@ class CallRecordingService : Service() {
     @Volatile private var number: String? = null
     private var callType: CallType = CallType.UNKNOWN
     private var startedAt = 0L
+    // Call-log date captured at call start; finalize waits for the first newer row (this call's).
+    @Volatile private var logWatermark = 0L
     @Volatile private var usedSource: String = "unknown"
+    @Volatile private var manuallyStarted = false
+    @Volatile private var lastStopWasCallEnd = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * Every path returns START_NOT_STICKY: a restart by the system carries a null intent, i.e. no
+     * call behind it — and capturing from one would mean recording with no call in progress, which
+     * is exactly what a user who turned auto-record off does not want. Restarting cannot recover a
+     * lost capture anyway; the accessibility service is what drives us, and it will call again.
+     */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                // The stopper (CallAccessibilityService at call end) may carry a number/name
-                // recovered from the call log — refine the labels before we finalize. Guard
-                // against nulls so the overlay's close button doesn't wipe a good label.
-                intent.getStringExtra(EXTRA_NAME)?.let { displayName = it }
-                intent.getStringExtra(EXTRA_NUMBER)?.let { number = it }
-                stopRecordingAndFinish()
+        if (intent == null) {                       // sticky restart / redelivery: nothing to do
+            if (state == null) stopSelf()
+            return START_NOT_STICKY
+        }
+        when (intent.action) {
+            ACTION_HIDE_OVERLAY -> {
+                removeOverlay()
+                AppLog.i(this, "overlay_hidden", "recording_continues=${state == State.RECORDING}")
                 return START_NOT_STICKY
             }
-            else -> {
-                displayName = intent?.getStringExtra(EXTRA_NAME)
-                number = intent?.getStringExtra(EXTRA_NUMBER)
-                callType = runCatching {
-                    CallType.valueOf(intent?.getStringExtra(EXTRA_TYPE) ?: "UNKNOWN")
-                }.getOrDefault(CallType.UNKNOWN)
+            ACTION_ARM -> {
+                adoptExtras(intent)
+                AppLog.i(this, "recorder_armed", "state=$state type=$callType")
+                if (state == State.RECORDING) return START_NOT_STICKY  // label extras were still adopted
+                state = State.ARMED
+                // Go foreground even though we capture nothing yet: it is what puts the button on
+                // screen, and holding a microphone-type foreground service from the start is also
+                // what lets the mic actually open later, mid-call, from the background.
+                startForegroundWithNotif()
+                return START_NOT_STICKY
+            }
+            ACTION_STOP -> {
+                // The stopper may carry a fallback number/name — keep it as a hint. The
+                // authoritative cellular label is resolved from the call log during finalize.
+                // Guard against nulls so the overlay's close button doesn't wipe a good label.
+                intent.getStringExtra(EXTRA_NAME)?.let { displayName = it }
+                intent.getStringExtra(EXTRA_NUMBER)?.let { number = it }
+                val callEnded = intent.getBooleanExtra(EXTRA_CALL_ENDED, false)
+                lastStopWasCallEnd = callEnded
+                val keepManualStandby = callEnded && !RecorderPreferences.isAutoRecordEnabled(this)
+                AppLog.i(this, "recorder_stop_requested", "state=$state callEnded=$callEnded keepStandby=$keepManualStandby")
+                if (state == State.RECORDING) {
+                    reArmAfterStop = intent.getBooleanExtra(EXTRA_REARM, false) || keepManualStandby
+                    // Just stop capturing; the record thread finalizes (incl. the call-log poll)
+                    // and only then tears the service down or re-arms it, so the service Context
+                    // stays valid throughout.
+                    recording = false
+                } else if (!keepManualStandby) {
+                    // Armed (or never started): there is no record thread to finalize and hand
+                    // the teardown to, so retire here — otherwise the service would linger.
+                    finishService()
+                } else {
+                    startForegroundWithNotif()
+                }
+                return START_NOT_STICKY
+            }
+            ACTION_UPDATE_LABEL -> {
+                // Live label scraped off the in-call screen. Adopt any non-blank value; a blank
+                // scrape never wipes a name/number we already have.
+                intent.getStringExtra(EXTRA_NAME)?.takeIf { it.isNotBlank() }?.let { displayName = it }
+                intent.getStringExtra(EXTRA_NUMBER)?.takeIf { it.isNotBlank() }?.let { number = it }
+                AppLog.i(this, "label_updated", "name=${displayName ?: "missing"} number=${number ?: "missing"}")
+                // Delivered to a service that isn't up for a call (the user dismissed the overlay,
+                // and startService just instantiated us): don't linger as a zombie.
+                if (state == null) stopSelf()
+                return START_NOT_STICKY
+            }
+            else -> {  // ACTION_START — auto-record, or the user pressed record mid-call
+                adoptExtras(intent)
+                if (state == State.RECORDING) return START_NOT_STICKY  // adopt better fallback labels
+                state = State.RECORDING
+                manuallyStarted = intent.getBooleanExtra(EXTRA_MANUAL, false) || callType == CallType.UNKNOWN
+                AppLog.i(this, "recording_start_requested", "type=$callType manual=$manuallyStarted name=${displayName ?: "missing"}")
                 startForegroundWithNotif()
                 startRecording()
             }
         }
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    /**
+     * Adopts whatever label/type the intent carries, keeping what we already know when it carries
+     * nothing: an ACTION_START fired by the user's record button has no extras, and must not wipe
+     * the label that ACTION_ARM — and the live screen scrape since — already gave us.
+     */
+    private fun adoptExtras(intent: Intent?) {
+        intent ?: return
+        intent.getStringExtra(EXTRA_NAME)?.let { displayName = it }
+        intent.getStringExtra(EXTRA_NUMBER)?.let { number = it }
+        if (intent.hasExtra(EXTRA_LOG_WATERMARK)) {
+            logWatermark = intent.getLongExtra(EXTRA_LOG_WATERMARK, 0L)
+        }
+        if (intent.hasExtra(EXTRA_TYPE)) {
+            callType = runCatching {
+                CallType.valueOf(intent.getStringExtra(EXTRA_TYPE) ?: "UNKNOWN")
+            }.getOrDefault(CallType.UNKNOWN)
+        }
+        if (intent.getBooleanExtra(EXTRA_MANUAL, false)) manuallyStarted = true
     }
 
     // ---- Recording ---------------------------------------------------------------------
@@ -121,35 +227,49 @@ class CallRecordingService : Service() {
         if (recording) return
         recording = true
         startedAt = System.currentTimeMillis()
+        AppLog.i(this, "capture_started", "startedAt=$startedAt")
 
         recordThread = thread(name = "call-record") {
             val rawFile = File(cacheDir, "raw_$startedAt.pcm")
             var written = 0L
-            var record: AudioRecord? = null
             try {
-                // openRecorder() returns an already-started, signal-verified recorder.
-                record = openRecorder() ?: run {
-                    Log.e(TAG, "No usable audio source; aborting")
-                    return@thread
-                }
-                val buffer = ByteArray(readBufferSize())
-                BufferedOutputStream(FileOutputStream(rawFile)).use { out ->
-                    while (recording) {
-                        val n = record.read(buffer, 0, buffer.size)
-                        if (n > 0) {
-                            out.write(buffer, 0, n)
-                            written += n
+                var record: AudioRecord? = null
+                try {
+                    // openRecorder() returns an already-started, signal-verified recorder.
+                    record = openRecorder()
+                    if (record == null) {
+                        Log.e(TAG, "No usable audio source; aborting")
+                        AppLog.e(this, "no_audio_source")
+                    } else {
+                        val buffer = ByteArray(readBufferSize())
+                        BufferedOutputStream(FileOutputStream(rawFile)).use { out ->
+                            while (recording) {
+                                val n = record.read(buffer, 0, buffer.size)
+                                if (n > 0) {
+                                    out.write(buffer, 0, n)
+                                    written += n
+                                }
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Recording failed", e)
+                    AppLog.e(this, "capture_failed", "written=$written", e)
+                } finally {
+                    try { record?.stop() } catch (_: Exception) {}
+                    record?.release()
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Recording failed", e)
-            } finally {
-                try { record?.stop() } catch (_: Exception) {}
-                record?.release()
-            }
 
-            if (written > 0) finalizeRecording(rawFile, written) else rawFile.delete()
+                AppLog.i(this, "capture_stopped", "bytes=$written durationMs=${System.currentTimeMillis() - startedAt}")
+                if (written > 0) finalizeRecording(rawFile, written) else {
+                    rawFile.delete()
+                    AppLog.e(this, "empty_recording_discarded")
+                }
+            } finally {
+                // Always tear down — even if capture never started — so the foreground service
+                // never leaks. Finalize (including the call-log poll) has completed by here.
+                finishService()
+            }
         }
     }
 
@@ -254,69 +374,110 @@ class CallRecordingService : Service() {
         }
     }
 
-    /** Wrap raw PCM as WAV, normalize it, write the labeled output + sidecar. */
+    /** Save first, then process. A processing failure can never erase the playable raw fallback. */
     private fun finalizeRecording(rawFile: File, pcmBytes: Long) {
+        val duration = System.currentTimeMillis() - startedAt
+        var rawWav: File? = null
         try {
-            val duration = System.currentTimeMillis() - startedAt
-            val rawWav = File(cacheDir, "raw_$startedAt.wav")
-            // Wrap the headerless raw PCM into a valid WAV (header + payload).
-            prependWavHeader(rawWav, rawFile, pcmBytes)
+            val rawWavFile = File(cacheDir, "raw_$startedAt.wav")
+            rawWav = rawWavFile
+            prependWavHeader(rawWavFile, rawFile, pcmBytes)
             rawFile.delete()
-
-            val loaded = WavIo.readPcm16(rawWav)
-            // Spectral noise reduction first, THEN normalize — so the make-up gain lifts
-            // voice, not hiss (the capture sits only ~15-20 dB over the noise floor).
-            val denoised = NoiseReducer.reduce(loaded)
-            val result = AudioNormalizer.process(denoised)
-            val normalized = result.audio
 
             val outDir = File(getExternalFilesDir(null), "recordings").apply { mkdirs() }
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(startedAt))
             val safeLabel = (displayName ?: number ?: "unknown")
                 .replace(Regex("[^\\p{L}\\p{N}_-]"), "_").take(40)
             val outWav = File(outDir, "${stamp}_$safeLabel.wav")
-            WavIo.writePcm16(outWav, normalized)
             val baseName = outWav.name.removeSuffix(".wav")
-
-            // Keep the pre-normalization audio next to the output so the processing can be
-            // re-tuned on the REAL captured signal, not just its metrics. Moved out of
-            // cacheDir into recordings/ (deleting it here is what threw away our raw material).
             val rawKept = File(outDir, "$baseName.raw.wav")
-            if (!rawWav.renameTo(rawKept)) {
-                rawWav.copyTo(rawKept, overwrite = true); rawWav.delete()
+            if (!rawWavFile.renameTo(rawKept)) {
+                rawWavFile.copyTo(rawKept, overwrite = true); rawWavFile.delete()
             }
 
-            // Per-second metrics sidecars (raw vs processed) — exportable from the UI so
-            // the normalizer's behavior on real calls can be analyzed offline.
-            try {
-                // raw.csv describes the true raw capture, so measure the raw signal itself
-                // (result.diagnostics is derived from the denoised signal → for processed.csv).
-                val rawDiag = AudioNormalizer.process(loaded).diagnostics
-                AudioMetrics.writeCsv(
-                    File(outDir, "$baseName.raw.csv"),
-                    loaded, rawDiag, AudioMetrics.Stage.RAW, outWav.name, usedSource
-                )
-                AudioMetrics.writeCsv(
-                    File(outDir, "$baseName.processed.csv"),
-                    normalized, result.diagnostics, AudioMetrics.Stage.PROCESSED, outWav.name, usedSource
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "Metrics export failed (recording itself is saved)", e)
+            // The main playback file starts as a byte-for-byte playable raw fallback. Metadata is
+            // committed immediately, before label lookup, denoising, normalization or metrics.
+            rawKept.copyTo(outWav, overwrite = true)
+            writeMetadata(outWav, duration)
+            AppLog.i(this, "raw_recording_committed", "file=${outWav.name} bytes=$pcmBytes durationMs=$duration")
+
+            resolveCellularLabel()
+            writeMetadata(outWav, duration) // late name/number backfill without renaming the file
+
+            if (duration <= 60_000L) {
+                processShortRecording(rawKept, outWav, baseName, outDir)
+            } else {
+                processLongRecording(rawKept, outWav)
             }
 
-            val rec = Recording(
-                wavPath = outWav.absolutePath,
-                displayName = displayName,
-                number = number,
-                type = callType,
-                startedAtMillis = startedAt,
-                durationMillis = duration,
-            )
-            rec.sidecarFile().writeText(rec.toJson())
+            AppLog.i(this, "recording_saved", "file=${outWav.name} label=${displayName ?: number ?: "unknown"}")
             Log.i(TAG, "Saved recording: ${outWav.name}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Finalize failed", e)
+        } catch (t: Throwable) {
+            // Includes OutOfMemoryError. The raw-first path normally leaves a playable recording;
+            // if failure happened earlier, recover the PCM directly without allocating it.
+            AppLog.e(this, "finalize_failed", "rawPcm=${rawFile.exists()} rawWav=${rawWav?.exists()}", t)
+            Log.e(TAG, "Finalize failed", t)
+            recoverEmergencyRecording(rawFile, rawWav, pcmBytes, duration)
         }
+    }
+
+    private fun writeMetadata(outWav: File, duration: Long) {
+        val recording = Recording(
+            wavPath = outWav.absolutePath,
+            displayName = displayName,
+            number = number,
+            type = callType,
+            startedAtMillis = startedAt,
+            durationMillis = duration,
+        )
+        recording.sidecarFile().writeText(recording.toJson())
+    }
+
+    private fun processShortRecording(rawKept: File, outWav: File, baseName: String, outDir: File) {
+        val loaded = WavIo.readPcm16(rawKept)
+        val denoised = NoiseReducer.reduce(loaded)
+        val result = AudioNormalizer.process(denoised)
+        WavIo.writePcm16(outWav, result.audio)
+
+        runCatching {
+            val rawDiag = AudioNormalizer.process(loaded).diagnostics
+            AudioMetrics.writeCsv(File(outDir, "$baseName.raw.csv"), loaded, rawDiag, AudioMetrics.Stage.RAW, outWav.name, usedSource)
+            AudioMetrics.writeCsv(File(outDir, "$baseName.processed.csv"), result.audio, result.diagnostics, AudioMetrics.Stage.PROCESSED, outWav.name, usedSource)
+        }.onFailure { AppLog.w(this, "metrics_export_failed", error = it) }
+    }
+
+    private fun processLongRecording(rawKept: File, outWav: File) {
+        val processed = File(outWav.parentFile, outWav.nameWithoutExtension + ".processing.wav")
+        try {
+            AppLog.i(this, "chunked_processing_started", "file=${outWav.name}")
+            WavIo.processMonoPcm16InChunks(rawKept, processed, SAMPLE_RATE, 15) { chunk ->
+                AudioNormalizer.process(NoiseReducer.reduce(chunk)).audio
+            }
+            if (!processed.renameTo(outWav)) {
+                processed.copyTo(outWav, overwrite = true)
+                processed.delete()
+            }
+            AppLog.i(this, "chunked_processing_finished", "file=${outWav.name}")
+        } catch (t: Throwable) {
+            processed.delete()
+            // outWav is still the raw fallback copied before processing.
+            AppLog.e(this, "chunked_processing_failed_raw_kept", "file=${outWav.name}", t)
+        }
+    }
+
+    private fun recoverEmergencyRecording(rawPcm: File, wrappedWav: File?, pcmBytes: Long, duration: Long) {
+        runCatching {
+            val outDir = File(getExternalFilesDir(null), "recordings").apply { mkdirs() }
+            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(startedAt))
+            val outWav = File(outDir, "${stamp}_recovered.wav")
+            when {
+                wrappedWav?.exists() == true -> wrappedWav.copyTo(outWav, overwrite = true)
+                rawPcm.exists() -> prependWavHeader(outWav, rawPcm, pcmBytes)
+                else -> return
+            }
+            writeMetadata(outWav, duration)
+            AppLog.w(this, "emergency_recording_recovered", "file=${outWav.name}")
+        }.onFailure { AppLog.e(this, "emergency_recovery_failed", error = it) }
     }
 
     /** Writes raw PCM into a fresh WAV with a correct header (raw file has no header). */
@@ -330,18 +491,66 @@ class CallRecordingService : Service() {
         WavIo.writeHeaderInPlace(target, SAMPLE_RATE, 1, 16, pcmBytes)
     }
 
-    private fun stopRecordingAndFinish() {
-        recording = false
-        recordThread?.join(2000)
-        recordThread = null
-        removeOverlay()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+    /**
+     * Last-resort fallback for cellular calls: if the accessibility screen-scrape didn't give us
+     * both a name and a number, try the call log — waiting for THIS call's row to appear (past the
+     * watermark snapshotted at call start) so we never adopt a stale row. Only fills blanks, so a
+     * good scraped label always wins. No-op for WhatsApp and when we already have a full label.
+     * Runs on the record thread, so the blocking poll never touches the main thread.
+     */
+    private fun resolveCellularLabel() {
+        if (callType != CallType.CELLULAR) return
+        // Stopped by hand mid-call: this call's row only lands in the log when the call ENDS, so
+        // the poll could not possibly find it and would just burn its timeout. Keep the scrape.
+        if (reArmAfterStop && !lastStopWasCallEnd) return
+        if (!displayName.isNullOrBlank() && !number.isNullOrBlank()) return  // screen already gave us both
+        val entry = com.callstream.recorder.call.CallLogResolver
+            .resolveAfterId(applicationContext, logWatermark) ?: run {
+                AppLog.w(this, "cellular_label_not_found", "watermark=$logWatermark")
+                return
+            }
+        if (number.isNullOrBlank()) entry.number?.let { number = it }
+        if (displayName.isNullOrBlank()) {
+            val name = com.callstream.recorder.call.ContactResolver
+                .nameForNumber(applicationContext, entry.number ?: number) ?: entry.cachedName
+            if (!name.isNullOrBlank()) displayName = name
+        }
+        AppLog.i(this, "cellular_label_resolved", "name=${displayName ?: "missing"} number=${number ?: "missing"}")
+    }
+
+    /**
+     * Posts the end of a capture to the main thread, once the record thread has fully finalized.
+     * A user-initiated mid-call stop returns us to ARMED (the call is still up — they may want to
+     * record another stretch of it); anything else retires the service.
+     */
+    private fun finishService() {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            recordThread = null
+            if (reArmAfterStop) {
+                reArmAfterStop = false
+                usedSource = "unknown"
+                displayName = null
+                number = null
+                callType = CallType.UNKNOWN
+                logWatermark = 0L
+                manuallyStarted = false
+                lastStopWasCallEnd = false
+                state = State.ARMED
+                startForegroundWithNotif()  // repaints the button back to "record"
+            } else {
+                state = null
+                removeOverlay()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }
     }
 
     override fun onDestroy() {
         recording = false
+        state = null
         removeOverlay()
+        AppLog.w(this, "recording_service_destroyed")
         super.onDestroy()
     }
 
@@ -354,11 +563,19 @@ class CallRecordingService : Service() {
                 NotificationChannel(CHANNEL_ID, "Call recording", NotificationManager.IMPORTANCE_LOW)
             )
         }
+        val capturing = state == State.RECORDING
         val notif: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.recording_notification_title))
-            .setContentText(getString(R.string.recording_in_progress))
+            .setContentText(getString(if (capturing) R.string.recording_in_progress else R.string.recording_armed))
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
+            // The same control as the floating button, but reachable even when the "draw over
+            // other apps" permission is denied — otherwise the overlay is the only way in.
+            .addAction(
+                if (capturing) android.R.drawable.ic_media_pause else android.R.drawable.ic_btn_speak_now,
+                getString(if (capturing) R.string.action_stop_recording else R.string.action_start_recording),
+                selfIntent(if (capturing) ACTION_STOP else ACTION_START, reArm = capturing)
+            )
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -370,34 +587,87 @@ class CallRecordingService : Service() {
             startForeground(NOTIF_ID, notif)
         }
         showOverlay()
+        AppLog.i(this, "controls_presented", "state=$state overlay=${overlay != null}")
     }
+
+    /** A PendingIntent that sends [action] back to this service, for the notification buttons. */
+    private fun selfIntent(action: String, reArm: Boolean): PendingIntent =
+        PendingIntent.getService(
+            this,
+            action.hashCode(),  // distinct request codes, so start and stop stay distinct PIs
+            Intent(this, CallRecordingService::class.java).also {
+                it.action = action
+                if (reArm) it.putExtra(EXTRA_REARM, true)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
     // ---- Floating overlay --------------------------------------------------------------
 
     private fun showOverlay() {
-        if (overlay != null) return
-        if (!android.provider.Settings.canDrawOverlays(this)) return
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val view = LayoutInflater.from(this).inflate(R.layout.overlay_recorder, null)
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            x = 24; y = 160
+        if (overlay == null) {
+            if (!android.provider.Settings.canDrawOverlays(this)) {
+                AppLog.w(this, "overlay_unavailable", "permission=false; notification_fallback=true")
+                return
+            }
+            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val view = LayoutInflater.from(this).inflate(R.layout.overlay_recorder, null)
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                x = 24; y = 160
+            }
+            try {
+                windowManager?.addView(view, params)
+                overlay = view
+                AppLog.i(this, "overlay_added")
+            } catch (t: Throwable) {
+                AppLog.e(this, "overlay_add_failed", error = t)
+                overlay = null
+                return
+            }
         }
+        renderOverlay()
+    }
 
-        view.findViewById<TextView>(R.id.txt_status)?.text = getString(R.string.recording_in_progress)
+    /**
+     * Paints the floating widget for the current state and wires its buttons. ARMED offers a
+     * record button that starts capturing mid-call; while RECORDING the same button becomes
+     * stop-and-save (and we come back ARMED, so the call can be recorded in several stretches).
+     */
+    private fun renderOverlay() {
+        val view = overlay ?: return
+        val capturing = state == State.RECORDING
+        view.findViewById<TextView>(R.id.txt_status)?.text =
+            getString(if (capturing) R.string.recording_in_progress else R.string.tap_to_record)
+        view.findViewById<ImageView>(R.id.btn_record)?.apply {
+            setImageResource(
+                if (capturing) android.R.drawable.ic_media_pause else android.R.drawable.ic_btn_speak_now
+            )
+            setColorFilter(if (capturing) COLOR_RECORDING else COLOR_IDLE)
+            setOnClickListener {
+                if (state == State.RECORDING) sendSelf(ACTION_STOP, reArm = true)
+                else sendSelf(ACTION_START, reArm = false)
+            }
+        }
+        // X only hides this floating view. It deliberately does not stop, save or alter capture.
+        // Recording controls remain available in the foreground notification and Quick Settings.
         view.findViewById<ImageView>(R.id.btn_close)?.setOnClickListener {
-            val stop = Intent(this, CallRecordingService::class.java).apply { action = ACTION_STOP }
-            startService(stop)
+            sendSelf(ACTION_HIDE_OVERLAY, reArm = false)
         }
+    }
 
-        windowManager?.addView(view, params)
-        overlay = view
+    private fun sendSelf(action: String, reArm: Boolean) {
+        val i = Intent(this, CallRecordingService::class.java).also {
+            it.action = action
+            if (reArm) it.putExtra(EXTRA_REARM, true)
+        }
+        runCatching { startService(i) }
     }
 
     private fun removeOverlay() {
