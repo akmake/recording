@@ -32,7 +32,13 @@ import androidx.core.content.ContextCompat
  */
 object CallLogResolver {
 
-    data class Entry(val id: Long, val number: String?, val cachedName: String?, val date: Long)
+    data class Entry(
+        val id: Long,
+        val number: String?,
+        val cachedName: String?,
+        val date: Long,
+        val durationSeconds: Long = 0L,
+    )
 
     private const val DEFAULT_TIMEOUT_MS = 6_000L
     private const val DEFAULT_INTERVAL_MS = 400L
@@ -47,7 +53,7 @@ object CallLogResolver {
         return try {
             context.contentResolver.query(
                 CallLog.Calls.CONTENT_URI,
-                arrayOf(CallLog.Calls._ID, CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME, CallLog.Calls.DATE),
+                arrayOf(CallLog.Calls._ID, CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME, CallLog.Calls.DATE, CallLog.Calls.DURATION),
                 null, null,
                 "${CallLog.Calls.DATE} DESC"
             )?.use { c ->
@@ -56,6 +62,7 @@ object CallLogResolver {
                     number = c.getString(1)?.takeIf { it.isNotBlank() },
                     cachedName = c.getString(2)?.takeIf { it.isNotBlank() },
                     date = c.getLong(3),
+                    durationSeconds = c.getLong(4),
                 ) else null
             }
         } catch (_: Exception) {
@@ -125,5 +132,59 @@ object CallLogResolver {
             if (SystemClock.elapsedRealtime() >= deadline) return newerButBlank
             try { Thread.sleep(intervalMs) } catch (_: InterruptedException) { return newerButBlank }
         }
+    }
+
+    /**
+     * Timing-based fallback for ROMs that insert the current row before OFFHOOK (so its id is not
+     * newer than our watermark) or only several seconds after IDLE. It scores recent rows by both
+     * estimated end time and duration, and refuses candidates that are too far from this capture.
+     */
+    fun resolveFinishedCall(
+        context: Context,
+        afterId: Long,
+        recordingStartedAt: Long,
+        recordingEndedAt: Long,
+        timeoutMs: Long = 20_000L,
+    ): Entry? {
+        if (!hasPermission(context)) return null
+        val recordingDuration = (recordingEndedAt - recordingStartedAt).coerceAtLeast(0L)
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (true) {
+            val candidates = recent(context)
+            val best = candidates.mapNotNull { entry ->
+                val estimatedEnd = entry.date + entry.durationSeconds * 1000L
+                val endDiff = kotlin.math.abs(estimatedEnd - recordingEndedAt)
+                val durationDiff = kotlin.math.abs(entry.durationSeconds * 1000L - recordingDuration)
+                val insertedAfterStart = entry.id > afterId
+                val withinWindow = entry.date <= recordingEndedAt + 30_000L &&
+                    entry.date >= recordingStartedAt - 5 * 60_000L &&
+                    endDiff <= 3 * 60_000L && durationDiff <= 3 * 60_000L
+                if (!withinWindow) null else entry to (endDiff + durationDiff + if (insertedAfterStart) 0L else 30_000L)
+            }.minByOrNull { it.second }?.first
+            if (best != null && !best.number.isNullOrBlank()) return best
+            if (SystemClock.elapsedRealtime() >= deadline) return best
+            try { Thread.sleep(DEFAULT_INTERVAL_MS) } catch (_: InterruptedException) { return best }
+        }
+    }
+
+    private fun recent(context: Context): List<Entry> {
+        if (!hasPermission(context)) return emptyList()
+        return try {
+            context.contentResolver.query(
+                CallLog.Calls.CONTENT_URI,
+                arrayOf(CallLog.Calls._ID, CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME, CallLog.Calls.DATE, CallLog.Calls.DURATION),
+                null, null, "${CallLog.Calls.DATE} DESC"
+            )?.use { c ->
+                buildList {
+                    while (c.moveToNext() && size < 12) add(Entry(
+                        id = c.getLong(0),
+                        number = c.getString(1)?.takeIf { it.isNotBlank() },
+                        cachedName = c.getString(2)?.takeIf { it.isNotBlank() },
+                        date = c.getLong(3),
+                        durationSeconds = c.getLong(4),
+                    ))
+                }
+            } ?: emptyList()
+        } catch (_: Exception) { emptyList() }
     }
 }

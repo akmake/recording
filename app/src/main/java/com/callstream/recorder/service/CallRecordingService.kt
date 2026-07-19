@@ -499,16 +499,17 @@ class CallRecordingService : Service() {
      * Runs on the record thread, so the blocking poll never touches the main thread.
      */
     private fun resolveCellularLabel() {
-        if (callType != CallType.CELLULAR) return
+        if (callType != CallType.CELLULAR && !(callType == CallType.UNKNOWN && manuallyStarted)) return
         // Stopped by hand mid-call: this call's row only lands in the log when the call ENDS, so
         // the poll could not possibly find it and would just burn its timeout. Keep the scrape.
-        if (reArmAfterStop && !lastStopWasCallEnd) return
+        if (!lastStopWasCallEnd && (reArmAfterStop || callType == CallType.UNKNOWN)) return
         if (!displayName.isNullOrBlank() && !number.isNullOrBlank()) return  // screen already gave us both
         val entry = com.callstream.recorder.call.CallLogResolver
-            .resolveAfterId(applicationContext, logWatermark) ?: run {
+            .resolveFinishedCall(applicationContext, logWatermark, startedAt, System.currentTimeMillis()) ?: run {
                 AppLog.w(this, "cellular_label_not_found", "watermark=$logWatermark")
                 return
             }
+        if (callType == CallType.UNKNOWN) callType = CallType.CELLULAR
         if (number.isNullOrBlank()) entry.number?.let { number = it }
         if (displayName.isNullOrBlank()) {
             val name = com.callstream.recorder.call.ContactResolver

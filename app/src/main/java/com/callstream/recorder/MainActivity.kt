@@ -378,12 +378,12 @@ private fun ManualFallbackCard(onStart: () -> Unit, onStop: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = onStart, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Mic, null)
+                    Icon(Icons.Default.Phone, null)
                     Spacer(Modifier.width(6.dp))
                     Text("הקלט עכשיו")
                 }
                 OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Stop, null)
+                    Icon(Icons.Default.Close, null)
                     Spacer(Modifier.width(6.dp))
                     Text("עצור ושמור")
                 }
@@ -407,7 +407,7 @@ private fun DiagnosticsCard(
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth().clickable(onClick = onToggle), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.BugReport, null, tint = DeepTeal)
+                Icon(Icons.Default.Info, null, tint = DeepTeal)
                 Spacer(Modifier.width(10.dp))
                 Text("אבחון ולוגים", Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Ink)
                 Icon(if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, null, tint = Muted)

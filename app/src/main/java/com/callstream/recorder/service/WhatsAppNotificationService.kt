@@ -60,7 +60,7 @@ class WhatsAppNotificationService : NotificationListenerService() {
             n.extras.getCharSequence(Notification.EXTRA_SUB_TEXT),
         ).joinToString(" ").lowercase()
         return n.category == Notification.CATEGORY_CALL ||
-            (n.flags and Notification.FLAG_ONGOING != 0 &&
+            (n.flags and Notification.FLAG_ONGOING_EVENT != 0 &&
                 listOf("call", "calling", "ongoing", "שיחה", "מתקשר").any(text::contains))
     }
 }

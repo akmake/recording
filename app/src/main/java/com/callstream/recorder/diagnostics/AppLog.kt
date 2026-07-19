@@ -28,11 +28,6 @@ object AppLog {
         write(context, "E", event, details, error)
 
     private fun write(context: Context, level: String, event: String, details: String, error: Throwable?) {
-        val suffix = buildString {
-            if (details.isNotBlank()) append(" | ").append(details.replace('\n', ' '))
-            if (error != null) append(" | ").append(error.javaClass.simpleName).append(": ").append(error.message)
-        }
-        val line = "${formatter.format(Date())} $level $event$suffix\n"
         when (level) {
             "E" -> Log.e(TAG, "$event $details", error)
             "W" -> Log.w(TAG, "$event $details", error)
@@ -40,6 +35,11 @@ object AppLog {
         }
         synchronized(lock) {
             runCatching {
+                val suffix = buildString {
+                    if (details.isNotBlank()) append(" | ").append(details.replace('\n', ' '))
+                    if (error != null) append(" | ").append(error.javaClass.simpleName).append(": ").append(error.message)
+                }
+                val line = "${formatter.format(Date())} $level $event$suffix\n"
                 val target = file(context.applicationContext)
                 if (target.length() > MAX_BYTES) {
                     val bytes = target.readBytes()
